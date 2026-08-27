@@ -4,8 +4,8 @@ export type ResourceId =
   | 'data' | 'compute' | 'processed' | 'filtered' | 'encrypted' | 'fragment' | 'credits';
 
 export type NodeTypeId =
-  | 'relay' | 'storage' | 'compute' | 'router' | 'proxy'
-  | 'processor' | 'firewall' | 'encryption' | 'datacenter' | 'hub';
+  | 'relay' | 'storage' | 'cache' | 'compute' | 'router' | 'balancer' | 'proxy'
+  | 'processor' | 'archive' | 'firewall' | 'encryption' | 'refinery' | 'datacenter' | 'hub' | 'core';
 
 export type TechId = 'routing' | 'processing' | 'security' | 'encryptionTech' | 'distributed';
 export type UpgradeId = 'bandwidth' | 'storageCap' | 'prodSpeed' | 'procSpeed' | 'packetSize';
@@ -29,6 +29,7 @@ export interface NodeDef {
   recipe?: NodeRecipe;
   capacity: number;
   tech?: TechId;
+  requireCore?: boolean; // unlocked when the Network Core goal is achieved
 }
 
 export interface TechDef {
@@ -131,6 +132,9 @@ export interface Toast { id: number; kind: 'ok' | 'err' | 'info'; textKey: strin
 export interface UISnapshot {
   v: number;
   lang: Lang; muted: boolean;
+  started: boolean;
+  gridOn: boolean;
+  codexOpen: boolean;
   data: number; credits: number; fragments: number;
   coreOnline: boolean; showCoreModal: boolean;
   nodeCount: number; connCount: number; flowRate: number;

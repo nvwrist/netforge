@@ -68,6 +68,9 @@ export class Game {
 
   shopOpen = typeof window !== 'undefined' && window.innerWidth > 900;
   helpOpen = false;
+  codexOpen = false;
+  gridOn = true;
+  started = false;
   private offlinePending: { data: number; credits: number; hours: number } | null = null;
   private showCoreModal = false;
 
@@ -137,7 +140,8 @@ export class Game {
     if (this.keys.has('d') || this.keys.has('arrowright')) this.camera.x += sp;
     this.camera.clamp();
 
-    // production
+    // production (frozen until the operator boots the network from the start screen)
+    if (!this.started) return;
     updateProduction(this.state, dt, {
       onWallet: (res, amount, node) => {
         const color = RES_META[res].color;
@@ -224,6 +228,7 @@ export class Game {
       particles: this.particles,
       floats: this.floats,
       w: this.w, h: this.h, dpr: this.dpr,
+      gridOn: this.gridOn,
     });
   }
 
@@ -412,6 +417,7 @@ export class Game {
     if (k === 'escape') {
       if (this.ghostType) this.cancelPlacement();
       else if (this.drag?.kind === 'conn') this.drag = null;
+      else if (this.codexOpen) this.codexOpen = false;
       else if (this.helpOpen) this.helpOpen = false;
       else this.selectedId = null;
       this.bump();
@@ -672,7 +678,30 @@ export class Game {
 
   setShopOpen(open: boolean): void { this.shopOpen = open; this.bump(); }
   setHelpOpen(open: boolean): void { this.helpOpen = open; this.bump(); }
+  setCodexOpen(open: boolean): void { this.codexOpen = open; this.bump(); }
   closeCoreModal(): void { this.showCoreModal = false; this.bump(); }
+
+  startGame(): void {
+    if (this.started) return;
+    this.started = true;
+    this.audio.unlock();
+    this.audio.buy();
+    this.bump();
+  }
+
+  toggleGrid(): void { this.gridOn = !this.gridOn; this.bump(); }
+
+  zoomBy(factor: number): void {
+    this.camera.zoomAt(this.w / 2, this.h / 2, factor);
+  }
+
+  resetView(): void {
+    this.camera.x = -110;
+    this.camera.y = 0;
+    this.camera.zoom = 1;
+    this.camera.clamp();
+    this.bump();
+  }
 
   skipTutorial(): void {
     this.state.tutorialStep = -1;
@@ -685,7 +714,7 @@ export class Game {
     if (step < 0) return;
     const s = this.state;
     let done = false;
-    if (step === 0) done = s.nodes.some((n) => n.type === 'storage' && (n.inv.data ?? 0) >= 4);
+    if (step === 0) done = s.stats.delivered >= 4;
     else if (step === 1) done = ownedCount(s, 'relay') >= 2;
     else if (step === 2) done = s.connections.length >= 2;
     else if (step === 3) done = ownedCount(s, 'router') >= 1;
@@ -808,6 +837,9 @@ export class Game {
     return {
       v: (this.snapshot?.v ?? 0) + 1,
       lang: s.lang, muted: s.muted,
+      started: this.started,
+      gridOn: this.gridOn,
+      codexOpen: this.codexOpen,
       data: s.wallet.data, credits: s.wallet.credits, fragments: s.fragments,
       coreOnline: s.coreOnline, showCoreModal: this.showCoreModal,
       nodeCount: s.nodes.length, connCount: s.connections.length,

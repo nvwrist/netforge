@@ -1,5 +1,6 @@
 import type { Camera } from './camera';
 import { NODE_DEFS, RES_META, fmt, tr } from './data';
+import { drawNodeIcon } from './icons';
 import { NODE_W, inputCapFor, invResources, nodeH, portPos, storageCapacity } from './state';
 import type {
   FloatText, GameNode, GameState, NodeTypeId, Particle,
@@ -19,6 +20,7 @@ export interface RenderView {
   w: number;
   h: number;
   dpr: number;
+  gridOn: boolean;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -65,6 +67,7 @@ export class Renderer {
 
   // ── grid ───────────────────────────────────────────────────────────────────
   private drawGrid(ctx: CanvasRenderingContext2D, v: RenderView): void {
+    if (!v.gridOn) return;
     const cam = v.camera;
     const tl = cam.screenToWorld(0, 0);
     const br = cam.screenToWorld(v.w, v.h);
@@ -422,118 +425,7 @@ export class Renderer {
 
   // ── procedural icons ───────────────────────────────────────────────────────
   private drawIcon(ctx: CanvasRenderingContext2D, type: NodeTypeId, cx: number, cy: number): void {
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = '#9fb4cc';
-    ctx.fillStyle = '#2a3644';
-    const r = (x: number, y: number, w: number, h: number) => ctx.strokeRect(x, y, w, h);
-    switch (type) {
-      case 'relay':
-        r(-10, -9, 20, 5); r(-10, -2, 20, 5); r(-10, 5, 20, 5);
-        ctx.fillStyle = '#3fc1ff';
-        ctx.fillRect(-7, -7.5, 4, 2); ctx.fillRect(-7, -0.5, 4, 2); ctx.fillRect(-7, 6.5, 4, 2);
-        break;
-      case 'storage':
-        ctx.beginPath();
-        ctx.ellipse(0, -7, 10, 4, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(-10, -7); ctx.lineTo(-10, 7);
-        ctx.ellipse(0, 7, 10, 4, 0, Math.PI, 0, true);
-        ctx.lineTo(10, -7);
-        ctx.stroke();
-        ctx.beginPath(); ctx.ellipse(0, 0, 10, 4, 0, 0, Math.PI); ctx.stroke();
-        break;
-      case 'compute':
-        r(-8, -8, 16, 16); r(-4, -4, 8, 8);
-        ctx.beginPath();
-        for (const o of [-5, 0, 5]) {
-          ctx.moveTo(o, -8); ctx.lineTo(o, -12);
-          ctx.moveTo(o, 8); ctx.lineTo(o, 12);
-          ctx.moveTo(-8, o); ctx.lineTo(-12, o);
-          ctx.moveTo(8, o); ctx.lineTo(12, o);
-        }
-        ctx.stroke();
-        break;
-      case 'router':
-        ctx.beginPath();
-        ctx.moveTo(-10, 0); ctx.lineTo(10, 0);
-        ctx.moveTo(0, -10); ctx.lineTo(0, 10);
-        ctx.stroke();
-        ctx.fillStyle = '#9fb4cc';
-        for (const [ax, ay, rot] of [[10, 0, 0], [-10, 0, Math.PI], [0, -10, -Math.PI / 2], [0, 10, Math.PI / 2]] as [number, number, number][]) {
-          ctx.save(); ctx.translate(ax, ay); ctx.rotate(rot);
-          ctx.beginPath(); ctx.moveTo(3, 0); ctx.lineTo(-2, -3); ctx.lineTo(-2, 3); ctx.closePath(); ctx.fill();
-          ctx.restore();
-        }
-        ctx.fillStyle = '#2a3644'; r(-3, -3, 6, 6);
-        break;
-      case 'proxy':
-        ctx.beginPath();
-        ctx.moveTo(-11, -4); ctx.lineTo(7, -4);
-        ctx.moveTo(11, 4); ctx.lineTo(-7, 4);
-        ctx.stroke();
-        ctx.fillStyle = '#9fb4cc';
-        ctx.save(); ctx.translate(9, -4); ctx.beginPath(); ctx.moveTo(3, 0); ctx.lineTo(-3, -3); ctx.lineTo(-3, 3); ctx.fill(); ctx.restore();
-        ctx.save(); ctx.translate(-9, 4); ctx.rotate(Math.PI); ctx.beginPath(); ctx.moveTo(3, 0); ctx.lineTo(-3, -3); ctx.lineTo(-3, 3); ctx.fill(); ctx.restore();
-        r(-2, -9, 4, 18);
-        break;
-      case 'processor':
-        r(-9, -9, 18, 18);
-        r(-4, -4, 8, 8);
-        ctx.beginPath();
-        ctx.moveTo(-9, -4); ctx.lineTo(-13, -4); ctx.moveTo(-9, 4); ctx.lineTo(-13, 4);
-        ctx.moveTo(9, -4); ctx.lineTo(13, -4); ctx.moveTo(9, 4); ctx.lineTo(13, 4);
-        ctx.stroke();
-        ctx.fillStyle = '#ffb02e';
-        ctx.fillRect(-2, -2, 4, 4);
-        break;
-      case 'firewall':
-        ctx.beginPath();
-        ctx.moveTo(0, -11); ctx.lineTo(9, -7); ctx.lineTo(9, 2);
-        ctx.quadraticCurveTo(9, 9, 0, 12);
-        ctx.quadraticCurveTo(-9, 9, -9, 2);
-        ctx.lineTo(-9, -7);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(-4, 0); ctx.lineTo(4, 0);
-        ctx.moveTo(0, -4); ctx.lineTo(0, 4);
-        ctx.stroke();
-        break;
-      case 'encryption':
-        r(-7, -2, 14, 11);
-        ctx.beginPath();
-        ctx.arc(0, -2, 5, Math.PI, 0);
-        ctx.stroke();
-        ctx.fillStyle = '#c792ff';
-        ctx.fillRect(-1.5, 1.5, 3, 4);
-        break;
-      case 'datacenter':
-        r(-10, -11, 20, 22);
-        ctx.beginPath();
-        ctx.moveTo(-10, -4); ctx.lineTo(10, -4);
-        ctx.moveTo(-10, 3); ctx.lineTo(10, 3);
-        ctx.stroke();
-        ctx.fillStyle = '#3fc1ff';
-        ctx.fillRect(-7, -9, 3, 2); ctx.fillRect(-7, -2, 3, 2); ctx.fillRect(-7, 5, 3, 2);
-        ctx.fillStyle = '#ffb02e';
-        ctx.fillRect(2, -9, 5, 2);
-        break;
-      case 'hub':
-        for (let i = -1; i <= 1; i++) {
-          for (let j = -1; j <= 1; j++) {
-            if (i === 0 && j === 0) continue;
-            ctx.strokeRect(i * 8 - 2.5, j * 8 - 2.5, 5, 5);
-          }
-        }
-        ctx.fillStyle = '#3fc1ff';
-        ctx.fillRect(-3, -3, 6, 6);
-        ctx.strokeStyle = '#3fc1ff';
-        ctx.strokeRect(-3.5, -3.5, 7, 7);
-        break;
-    }
-    ctx.restore();
+    drawNodeIcon(ctx, type, cx, cy);
   }
+
 }

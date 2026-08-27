@@ -170,6 +170,7 @@ export function ownedCount(state: GameState, type: NodeTypeId): number {
 }
 
 export function isUnlocked(state: GameState, def: NodeDef): boolean {
+  if (def.requireCore) return state.coreOnline;
   if (!def.tech) return true;
   return state.techs.includes(def.tech);
 }

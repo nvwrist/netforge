@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { GOAL_FRAGMENTS, RES_META, fmt, fmtRate, tr } from '../game/data';
+import { CATEGORY_ORDER, GOAL_FRAGMENTS, NODE_DEFS, RES_META, fmt, fmtRate, tr } from '../game/data';
 import type { Game } from '../game/Game';
 import type { CostEntry, ResourceId, UISnapshot } from '../game/types';
 
@@ -126,7 +126,8 @@ export function TopBar({ game }: { game: Game }) {
       </div>
 
       <div className="flex items-center gap-1">
-        <button className="hud-btn" onClick={() => game.setHelpOpen(true)} title={L('help.title')}>?</button>
+        <button className="hud-btn font-display font-bold" onClick={() => game.setCodexOpen(true)} title={L('menu.codex')}>▣</button>
+        <button className="hud-btn" onClick={() => game.setHelpOpen(true)} title={L('help.title')}>⌨</button>
         <button className="hud-btn" onClick={() => game.toggleMute()} title="sound">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
             <path d="M2 5.5v3h2.5L8 11V3L4.5 5.5H2Z" fill="#a9bad0" />
@@ -149,6 +150,27 @@ export function TopBar({ game }: { game: Game }) {
           {armReset ? L('menu.confirm') : '↺'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── floating view controls (zoom / grid / recenter) ──────────────────────────
+
+export function ViewControls({ game }: { game: Game }) {
+  const s = useGameUI(game);
+  const L = (k: string) => tr(s.lang, k);
+  return (
+    <div className="absolute right-3 bottom-3 z-20 flex flex-col gap-1">
+      <button className="hud-btn !h-8 !w-8 text-[15px]" onClick={() => game.zoomBy(1.25)} title={L('menu.zoomIn')}>+</button>
+      <button className="hud-btn !h-8 !w-8 text-[15px]" onClick={() => game.zoomBy(1 / 1.25)} title={L('menu.zoomOut')}>−</button>
+      <button className="hud-btn !h-8 !w-8" onClick={() => game.resetView()} title={L('menu.fit')}>⌖</button>
+      <button
+        className={`hud-btn !h-8 !w-8 ${s.gridOn ? '!text-[#3fc1ff] !border-[#3fc1ff]/50' : ''}`}
+        onClick={() => game.toggleGrid()}
+        title={L('menu.grid')}
+      >
+        ▦
+      </button>
     </div>
   );
 }
@@ -196,31 +218,49 @@ export function ShopPanel({ game }: { game: Game }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
-        {tab === 'nodes' && s.shop.map((item) => (
-          <button
-            key={item.id}
-            disabled={!item.unlocked}
-            onClick={() => game.buyFromShop(item.id)}
-            className={`w-full text-left panel p-2.5 relative transition-all group ${
-              item.unlocked
-                ? item.afford
-                  ? 'hover:border-[#3fc1ff]/70 hover:bg-[#152030] cursor-pointer active:scale-[0.99]'
-                  : 'opacity-80 cursor-pointer hover:border-[#33465e]'
-                : 'opacity-45 cursor-not-allowed'
-            }`}
-          >
-            {item.owned > 0 && (
-              <span className="absolute top-1.5 right-2 text-[10px] text-[#5c6b7f] font-semibold">×{item.owned}</span>
-            )}
-            <div className="font-display font-bold text-[12.5px] tracking-wide text-[#d5e1ef] group-hover:text-[#3fc1ff] transition-colors">
-              {L(item.nameKey)}
+        {tab === 'nodes' && CATEGORY_ORDER.map((cat) => {
+          const items = s.shop.filter((i) => NODE_DEFS[i.id].category === cat);
+          if (items.length === 0) return null;
+          return (
+            <div key={cat}>
+              <div className="flex items-center gap-2 mt-2 mb-1.5 first:mt-0">
+                <span className="font-display font-bold text-[9.5px] tracking-[0.2em] text-[#5c6b7f]">{L('codex.cat.' + cat)}</span>
+                <span className="flex-1 h-px bg-[#1c2735]" />
+              </div>
+              <div className="space-y-2">
+                {items.map((item) => (
+                  <button
+                    key={item.id}
+                    disabled={!item.unlocked}
+                    onClick={() => game.buyFromShop(item.id)}
+                    className={`w-full text-left panel p-2.5 relative transition-all group ${
+                      item.unlocked
+                        ? item.afford
+                          ? 'hover:border-[#3fc1ff]/70 hover:bg-[#152030] cursor-pointer active:scale-[0.99]'
+                          : 'opacity-80 cursor-pointer hover:border-[#33465e]'
+                        : 'opacity-45 cursor-not-allowed'
+                    }`}
+                  >
+                    {item.owned > 0 && (
+                      <span className="absolute top-1.5 right-2 text-[10px] text-[#5c6b7f] font-semibold">×{item.owned}</span>
+                    )}
+                    <div className="font-display font-bold text-[12.5px] tracking-wide text-[#d5e1ef] group-hover:text-[#3fc1ff] transition-colors">
+                      {L(item.nameKey)}
+                    </div>
+                    <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5 mb-1.5">{L(item.descKey)}</div>
+                    {item.unlocked
+                      ? <CostChips cost={item.cost} afford={item.afford} lang={s.lang} />
+                      : (
+                        <span className="text-[9px] font-bold tracking-wider text-[#ffb02e]">
+                          ▣ {L(NODE_DEFS[item.id].requireCore ? 'shop.lockedCore' : 'shop.locked')}
+                        </span>
+                      )}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5 mb-1.5">{L(item.descKey)}</div>
-            {item.unlocked
-              ? <CostChips cost={item.cost} afford={item.afford} lang={s.lang} />
-              : <span className="text-[9px] font-bold tracking-wider text-[#ffb02e]">▣ {L('shop.locked')}</span>}
-          </button>
-        ))}
+          );
+        })}
 
         {tab === 'tech' && s.techs.map((t) => (
           <div key={t.id} className={`w-full text-left panel p-2.5 ${t.unlocked ? 'opacity-70' : ''}`}>

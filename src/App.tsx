@@ -1,41 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
 import { Game } from './game/Game';
+import { InfoPanel, ShopPanel, TopBar, ViewControls } from './ui/panels';
 import { Overlays } from './ui/overlays';
-import { InfoPanel, ShopPanel, TopBar } from './ui/panels';
+import { CodexModal, StartScreen } from './ui/codex';
 
 export default function App() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [game, setGame] = useState<Game | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameRef = useRef<Game | null>(null);
+  const [, force] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas);
-    g.start();
-    setGame(g);
-    return () => g.destroy();
+    const game = new Game(canvas);
+    gameRef.current = game;
+    game.start();
+    const unsub = game.subscribe(() => force((x) => x + 1));
+    return () => {
+      unsub();
+      game.destroy();
+      gameRef.current = null;
+    };
   }, []);
 
+  const game = gameRef.current;
+  const snap = game?.getSnapshot();
+
   return (
-    <div className="fixed inset-0 overflow-hidden bg-[#0f141a] select-none">
-      <canvas ref={canvasRef} className="absolute inset-0 touch-none cursor-crosshair" />
-
-      {/* vignette + scanline flavor, purely decorative */}
-      <div
-        className="absolute inset-0 pointer-events-none z-10"
-        style={{ background: 'radial-gradient(ellipse at center, transparent 55%, rgba(5,8,12,0.55) 100%)' }}
-      />
-      <div
-        className="absolute inset-0 pointer-events-none z-10 opacity-[0.05]"
-        style={{ background: 'repeating-linear-gradient(0deg, transparent 0 2px, #9fc2e8 2px 3px)' }}
-      />
-
-      {game && (
+    <div className="fixed inset-0 overflow-hidden bg-[#0f141a] select-none" onContextMenu={(e) => e.preventDefault()}>
+      <canvas ref={canvasRef} className="absolute inset-0 block touch-none cursor-crosshair" />
+      {game && snap && (
         <>
           <TopBar game={game} />
           <ShopPanel game={game} />
           <InfoPanel game={game} />
+          <ViewControls game={game} />
           <Overlays game={game} />
+          {snap.codexOpen && <CodexModal game={game} snap={snap} />}
+          {!snap.started && !snap.codexOpen && <StartScreen game={game} snap={snap} />}
         </>
       )}
     </div>
