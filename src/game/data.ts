@@ -22,11 +22,11 @@ export const RES_ORDER: ResourceId[] = [D, 'compute', 'processed', 'filtered', '
 // ── Tuning constants ─────────────────────────────────────────────────────────
 
 export const TUNE = {
-  travelTime: 1.15,
+  travelTime: 0.9,
   baseRate: 2.0,
   bwMultPerLevel: 1.5,
-  storageDrainMax: 0.9,   // reserve conversion at 100% fill (slower, buffer stays visible)
-  storageDrainExp: 1.3,   // drain ∝ fill^exp  → fuller = faster
+  storageDrainMax: 1.2,   // reserve conversion at 100% fill
+  storageDrainExp: 1.15,  // drain ∝ fill^exp  → fuller = faster
   capPerLevel: 0.5,
   speedPerLevel: 0.88,
   nodeTimePerLevel: 0.85,
@@ -39,7 +39,7 @@ export const TUNE = {
 
 // ── Endless progression configs ──────────────────────────────────────────────
 
-export const SURGE_CFG = { intervalMin: 40, intervalMax: 90, window: 8, active: 15, mult: 3 };
+export const SURGE_CFG = { intervalMin: 30, intervalMax: 75, window: 8, active: 15, mult: 3 };
 export const TIER_CFG = { base: 150, growth: 5, bonusPerTier: 0.10 };
 export const LEGACY_CFG = { divisor: 10, multPerPoint: 0.02, costScale: 1.2, startDataBonus: 0.25 };
 export const RESEARCH_CFG = { base: 300, growth: 2.5, bonusPerTier: 0.08 };
@@ -57,33 +57,33 @@ export function tierGoal(tier: number): number {
 export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   relay: {
     id: 'relay', nameKey: 'nd.relay', descKey: 'nd.relay.d',
-    category: 'generator', cost: { [D]: 25 }, costGrowth: 1.12,
+    category: 'generator', cost: { [D]: 15 }, costGrowth: 1.16,
     inputs: [], outputs: [D],
-    recipe: { inputs: [], outputs: [{ resource: D, amount: 1 }], time: 2.2 },
-    capacity: 20,
+    recipe: { inputs: [], outputs: [{ resource: D, amount: 1 }], time: 1.6 },
+    capacity: 24,
   },
   storage: {
     id: 'storage', nameKey: 'nd.storage', descKey: 'nd.storage.d',
-    category: 'storage', cost: { [D]: 60 }, costGrowth: 1.15,
+    category: 'storage', cost: { [D]: 45 }, costGrowth: 1.18,
     inputs: [D, D], outputs: [D],
     capacity: 120,
   },
   cache: {
     id: 'cache', nameKey: 'nd.cache', descKey: 'nd.cache.d',
-    category: 'transfer', cost: { [D]: 45 }, costGrowth: 1.15,
+    category: 'transfer', cost: { [D]: 30 }, costGrowth: 1.16,
     inputs: [D], outputs: [D],
     capacity: 40,
   },
   compute: {
     id: 'compute', nameKey: 'nd.compute', descKey: 'nd.compute.d',
-    category: 'generator', cost: { [D]: 140 }, costGrowth: 1.15,
+    category: 'generator', cost: { [D]: 80 }, costGrowth: 1.18,
     inputs: [], outputs: ['compute'],
-    recipe: { inputs: [], outputs: [{ resource: 'compute', amount: 1 }], time: 4 },
+    recipe: { inputs: [], outputs: [{ resource: 'compute', amount: 1 }], time: 3.2 },
     capacity: 15,
   },
   router: {
     id: 'router', nameKey: 'nd.router', descKey: 'nd.router.d',
-    category: 'transfer', cost: { [D]: 120 }, costGrowth: 1.18,
+    category: 'transfer', cost: { [D]: 70 }, costGrowth: 1.2,
     inputs: [D, D], outputs: [D, D],
     capacity: 12,
   },
@@ -95,26 +95,26 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   proxy: {
     id: 'proxy', nameKey: 'nd.proxy', descKey: 'nd.proxy.d',
-    category: 'processor', cost: { [D]: 350 }, costGrowth: 1.2,
+    category: 'processor', cost: { [D]: 240 }, costGrowth: 1.2,
     inputs: [D], outputs: ['processed'],
-    recipe: { inputs: [{ resource: D, amount: 2 }], outputs: [{ resource: 'processed', amount: 1 }], time: 2.8 },
+    recipe: { inputs: [{ resource: D, amount: 2 }], outputs: [{ resource: 'processed', amount: 1 }], time: 2.6 },
     capacity: 10, tech: 'routing',
   },
   processor: {
     id: 'processor', nameKey: 'nd.processor', descKey: 'nd.processor.d',
-    category: 'processor', cost: { [D]: 600 }, costGrowth: 1.22,
+    category: 'processor', cost: { [D]: 400 }, costGrowth: 1.22,
     inputs: [D, 'compute'], outputs: [],
     recipe: {
       inputs: [{ resource: D, amount: 2 }, { resource: 'compute', amount: 1 }],
-      outputs: [{ resource: 'fragment', amount: 1 }], time: 5,
+      outputs: [{ resource: 'fragment', amount: 1 }], time: 4.5,
     },
     capacity: 10, tech: 'processing',
   },
   archive: {
     id: 'archive', nameKey: 'nd.archive', descKey: 'nd.archive.d',
-    category: 'processor', cost: { [D]: 500 }, costGrowth: 1.22,
+    category: 'processor', cost: { [D]: 300 }, costGrowth: 1.22,
     inputs: [D], outputs: [],
-    recipe: { inputs: [{ resource: D, amount: 4 }], outputs: [{ resource: 'credits', amount: 2 }], time: 4.5 },
+    recipe: { inputs: [{ resource: D, amount: 4 }], outputs: [{ resource: 'credits', amount: 2 }], time: 4.2 },
     capacity: 12, tech: 'processing',
   },
   firewall: {
@@ -257,12 +257,12 @@ export const CATEGORY_ORDER: NodeDef['category'][] = ['generator', 'storage', 't
 // ── Technologies (branched after routing) ────────────────────────────────────
 
 export const TECH_DEFS: TechDef[] = [
-  { id: 'routing',        nameKey: 'tc.routing',        descKey: 'tc.routing.d',        cost: { [D]: 150 },  unlocks: ['proxy', 'balancer', 'smartrouter'] },
-  { id: 'processing',     nameKey: 'tc.processing',     descKey: 'tc.processing.d',     cost: { [D]: 300 },  unlocks: ['processor', 'archive', 'computebank'], requires: 'routing', path: 'A' },
-  { id: 'telemetry',      nameKey: 'tc.telemetry',      descKey: 'tc.telemetry.d',      cost: { [D]: 450 },  unlocks: ['sensor', 'signalbuffer', 'analyzer'], requires: 'processing', path: 'A' },
+  { id: 'routing',        nameKey: 'tc.routing',        descKey: 'tc.routing.d',        cost: { [D]: 110 },  unlocks: ['proxy', 'balancer', 'smartrouter'] },
+  { id: 'processing',     nameKey: 'tc.processing',     descKey: 'tc.processing.d',     cost: { [D]: 240 },  unlocks: ['processor', 'archive', 'computebank'], requires: 'routing', path: 'A' },
+  { id: 'telemetry',      nameKey: 'tc.telemetry',      descKey: 'tc.telemetry.d',      cost: { [D]: 420 },  unlocks: ['sensor', 'signalbuffer', 'analyzer'], requires: 'processing', path: 'A' },
   { id: 'security',       nameKey: 'tc.security',       descKey: 'tc.security.d',       cost: { [D]: 500 },  unlocks: ['firewall', 'compressor'], requires: 'routing', path: 'B' },
-  { id: 'encryptionTech', nameKey: 'tc.encryptionTech', descKey: 'tc.encryptionTech.d', cost: { [D]: 800 },  unlocks: ['encryption', 'assembler'], requires: 'security', path: 'B' },
-  { id: 'distributed',    nameKey: 'tc.distributed',    descKey: 'tc.distributed.d',    cost: { [D]: 1200 }, unlocks: ['datacenter', 'hub', 'refinery', 'forge'], requires: 'processing', path: 'A' },
+  { id: 'encryptionTech', nameKey: 'tc.encryptionTech', descKey: 'tc.encryptionTech.d', cost: { [D]: 950 },  unlocks: ['encryption', 'assembler'], requires: 'security', path: 'B' },
+  { id: 'distributed',    nameKey: 'tc.distributed',    descKey: 'tc.distributed.d',    cost: { [D]: 1600 }, unlocks: ['datacenter', 'hub', 'refinery', 'forge'], requires: 'processing', path: 'A' },
 ];
 
 // ── Global upgrades (endless) ────────────────────────────────────────────────

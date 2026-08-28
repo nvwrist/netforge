@@ -302,7 +302,7 @@ function defaultLife(): LifeStats {
 
 export function newGame(keep?: { legacy: number; prestigeCount: number; life: LifeStats; achievements: string[]; lang: GameState['lang']; muted: boolean }): GameState {
   const prestigeCount = keep?.prestigeCount ?? 0;
-  const startData = Math.round(60 * (1 + LEGACY_CFG.startDataBonus * prestigeCount));
+  const startData = Math.round(120 * (1 + LEGACY_CFG.startDataBonus * prestigeCount));
   const wallet: Wallet = { credits: 0 } as Wallet;
   wallet.data = startData;
   const state: GameState = {
