@@ -5,7 +5,7 @@ import type { GameState, Lang, LifeStats, NodeTypeId, OfflineGain, ResourceId, S
 const KEY = 'netforge-save-v2';
 const SCORE_KEY = 'netforge-scores-v1';
 
-interface SaveNode { id: string; type: string; x: number; y: number; level: number; inv: Record<string, number>; prod: number }
+interface SaveNode { id: string; type: string; x: number; y: number; level: number; inv: Record<string, number>; prod: number; modules?: string[]; blueprintId?: string | null }
 interface SaveConn { id: string; from: string; to: string }
 
 export interface SaveData {
@@ -15,6 +15,9 @@ export interface SaveData {
   coreTier: number; coreFragments: number;
   legacy: number; prestigeCount: number; researchTier: number;
   achievements: string[];
+  unlockedModules?: string[];
+  moduleChoice?: string[] | null;
+  blueprints?: GameState['blueprints'];
   nodes: SaveNode[]; conns: SaveConn[];
   techs: string[]; upgrades: Record<string, number>;
   tutorialStep: number;
@@ -37,9 +40,13 @@ export class SaveManager {
         coreTier: state.coreTier, coreFragments: state.coreFragments,
         legacy: state.legacy, prestigeCount: state.prestigeCount, researchTier: state.researchTier,
         achievements: [...state.achievements],
+        unlockedModules: [...state.unlockedModules],
+        moduleChoice: state.moduleChoice,
+        blueprints: [...state.blueprints],
         nodes: state.nodes.map((n) => ({
           id: n.id, type: n.type, x: n.x, y: n.y, level: n.level,
           inv: { ...n.inv } as Record<string, number>, prod: n.prod,
+          modules: [...n.modules], blueprintId: n.blueprintId,
         })),
         conns: state.connections.map((c) => ({ id: c.id, from: c.fromPort, to: c.toPort })),
         techs: [...state.techs],
@@ -130,6 +137,9 @@ export function applySave(d: SaveData): GameState {
     researchTier: Math.max(0, Math.floor(Number(d.researchTier) || 0)),
     achievements: Array.isArray(d.achievements) ? d.achievements.filter((a) => typeof a === 'string') : [],
     boosts: {},
+    unlockedModules: Array.isArray(d.unlockedModules) ? d.unlockedModules.filter((m) => typeof m === 'string') : [],
+    moduleChoice: Array.isArray(d.moduleChoice) ? d.moduleChoice.filter((m) => typeof m === 'string') : null,
+    blueprints: Array.isArray(d.blueprints) ? d.blueprints.filter((b) => !!b && typeof b.id === 'string' && typeof b.baseType === 'string') : [],
     nodes: [], connections: [],
     techs: (d.techs ?? []).filter((t): t is TechId => TECH_IDS.includes(t as TechId)),
     upgrades: defaultUpgrades(),
@@ -162,6 +172,9 @@ export function applySave(d: SaveData): GameState {
       prod: Math.max(0, Number(sn.prod) || 0),
       status: 'idle' as const, statusT: 0, ports: [] as GameState['nodes'][number]['ports'],
       flash: 0, flashColor: '#3fc1ff', surgeWindow: 0, surgeActive: 0,
+      modules: Array.isArray(sn.modules) ? sn.modules.filter((m) => typeof m === 'string') : [],
+      blueprintId: typeof sn.blueprintId === 'string' ? sn.blueprintId : null,
+      redundancyT: 0,
     };
     def.inputs.forEach((res, i) => node.ports.push({ id: `${node.id}|in${i}`, nodeId: node.id, dir: 'in', resource: res, connectionId: null }));
     def.outputs.forEach((res, i) => node.ports.push({ id: `${node.id}|out${i}`, nodeId: node.id, dir: 'out', resource: res, connectionId: null }));

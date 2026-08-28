@@ -1,5 +1,6 @@
 import { ACHIEVEMENTS, NODE_DEFS, SURGE_CFG, TUNE } from './data';
-import { inputCapFor, storageCapFor } from './state';
+import { MODULE_DEFS } from './data/modules';
+import { defFor, inputCapFor, storageCapFor } from './state';
 import type { GameNode, GameState, ResourceId } from './types';
 
 // Events emitted toward the presentation layer (floats, sounds). Engine stays pure logic.
@@ -31,8 +32,17 @@ export function boostMult(state: GameState, target: 'gen' | 'proc', now: number)
   return m;
 }
 
+function moduleSpeedMult(node: GameNode): number {
+  let s = 1;
+  for (const mid of node.modules) {
+    const m = MODULE_DEFS.find((x) => x.id === mid);
+    if (m?.effect.speedMult) s *= m.effect.speedMult;
+  }
+  return s;
+}
+
 export function effTime(state: GameState, node: GameNode, now: number): number {
-  const def = NODE_DEFS[node.type];
+  const def = defFor(state, node);
   if (!def.recipe) return 1;
   const up = def.category === 'generator'
     ? Math.pow(TUNE.speedPerLevel, state.upgrades.prodSpeed)
@@ -40,8 +50,42 @@ export function effTime(state: GameState, node: GameNode, now: number): number {
   const target = def.category === 'generator' ? 'gen' as const : 'proc' as const;
   const m = globalMult(state) * boostMult(state, target, now);
   let t = def.recipe.time * Math.pow(TUNE.nodeTimePerLevel, node.level - 1) * up / m;
+  t /= moduleSpeedMult(node);
   if (node.surgeActive > 0) t /= SURGE_CFG.mult;
   return t;
+}
+
+// Side output from modules («byproduct» family). Wallet resources go straight to the reserve.
+function applyOutputBonus(state: GameState, node: GameNode, def: ReturnType<typeof defFor>): void {
+  for (const mid of node.modules) {
+    const m = MODULE_DEFS.find((x) => x.id === mid);
+    const b = m?.effect.outputBonus;
+    if (!b) continue;
+    const amt = Math.max(1, Math.round(b.amount * (1 + TUNE.nodeQtyPerLevel * (node.level - 1))));
+    if (b.resource === 'credits') {
+      state.wallet.credits += amt;
+      state.stats.runCredits += amt;
+      state.stats.life.credits += amt;
+    } else if (b.resource === 'fragment') {
+      state.fragments += amt;
+      state.coreFragments += amt;
+      state.stats.life.fragments += amt;
+    } else if (b.resource === 'data') {
+      state.wallet.data += amt;
+      state.stats.life.data += amt;
+    } else {
+      node.inv[b.resource] = Math.min(def.capacity, (node.inv[b.resource] ?? 0) + amt);
+    }
+  }
+}
+
+function redundancySeconds(node: GameNode): number {
+  let total = 0;
+  for (const mid of node.modules) {
+    const m = MODULE_DEFS.find((x) => x.id === mid);
+    if (m?.effect.redundancySec) total += m.effect.redundancySec;
+  }
+  return total;
 }
 
 function outQty(node: GameNode, base: number): number {
@@ -53,7 +97,7 @@ function outQty(node: GameNode, base: number): number {
 export function updateProduction(state: GameState, dt: number, now: number, ev: EngineEvents): void {
   const capMult = 1 + TUNE.capPerLevel * state.upgrades.storageCap;
   for (const node of state.nodes) {
-    const def = NODE_DEFS[node.type];
+    const def = defFor(state, node);
     const prevStatus = node.status;
 
     // surge timers tick on every node
@@ -71,14 +115,14 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
       } else {
         node.prod += dt;
         let guard = 0;
-        while (node.prod >= time && guard++ < 8) {
-          node.prod -= time;
-          const add = outQty(node, out.amount);
-          node.inv[out.resource] = Math.min(cap, (node.inv[out.resource] ?? 0) + add);
-          state.stats.life.data += add;
-          if ((node.inv[out.resource] ?? 0) >= cap - 1e-6) { node.prod = 0; break; }
-        }
-        node.status = (node.inv[out.resource] ?? 0) >= cap - 1e-6 ? 'full' : 'online';
+          while (node.prod >= time && guard++ < 8) {
+            node.prod -= time;
+            const add = outQty(node, out.amount);
+            node.inv[out.resource] = Math.min(cap, (node.inv[out.resource] ?? 0) + add);
+            state.stats.life.data += add;
+            applyOutputBonus(state, node, def);
+            if ((node.inv[out.resource] ?? 0) >= cap - 1e-6) { node.prod = 0; break; }
+          }        node.status = (node.inv[out.resource] ?? 0) >= cap - 1e-6 ? 'full' : 'online';
       }
     } else if (def.category === 'processor' && def.recipe) {
       const time = effTime(state, node, now);
@@ -87,10 +131,15 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
         if (RES_TO_WALLET.includes(o.resource)) return true;
         return (node.inv[o.resource] ?? 0) + outQty(node, o.amount) <= def.capacity + 1e-6;
       });
+      // Redundancy module: internal buffer keeps the node running while starved.
+      const rMax = redundancySeconds(node);
+      if (hasInputs && rMax > 0) node.redundancyT = rMax;
+      const onRedundancy = !hasInputs && rMax > 0 && node.redundancyT > 0;
+      if (onRedundancy) node.redundancyT = Math.max(0, node.redundancyT - dt);
       if (!hasSpace) {
         node.status = 'full';
         node.prod = Math.min(node.prod, time);
-      } else if (!hasInputs) {
+      } else if (!hasInputs && !onRedundancy) {
         node.status = 'waiting';
         node.prod = Math.max(0, node.prod - dt * 0.5);
       } else {
@@ -98,9 +147,15 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
         let guard = 0;
         while (node.prod >= time && guard++ < 8) {
           const stillHas = def.recipe.inputs.every((i) => (node.inv[i.resource] ?? 0) >= i.amount - 1e-6);
-          if (!stillHas) { node.prod = time * 0.999; break; }
+          if (!stillHas && !onRedundancy) { node.prod = time * 0.999; break; }
+          if (!stillHas && onRedundancy && def.recipe.inputs.every((i) => (node.inv[i.resource] ?? 0) < 1e-6)) {
+            node.prod = time * 0.999; break; // buffer exhausted
+          }
           node.prod -= time;
-          def.recipe.inputs.forEach((i) => { node.inv[i.resource] = (node.inv[i.resource] ?? 0) - i.amount; });
+          def.recipe.inputs.forEach((i) => {
+            const cur = node.inv[i.resource] ?? 0;
+            node.inv[i.resource] = cur - Math.min(cur, i.amount);
+          });
           def.recipe.outputs.forEach((o) => {
             const amt = outQty(node, o.amount);
             if (o.resource === 'fragment') {
@@ -117,6 +172,7 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
               node.inv[o.resource] = Math.min(def.capacity, (node.inv[o.resource] ?? 0) + amt);
             }
           });
+          applyOutputBonus(state, node, def);
           ev.onCycleDone(node);
         }
         node.status = 'online';
@@ -125,12 +181,17 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
       // Хранилище может держать любой ресурс (data / compute / signal).
       // В резерв (wallet) стекают только валютные ресурсы — data и credits.
       const res = def.inputs[0];
-      const cap = storageCapFor(state, def);
+      const cap = storageCapFor(state, node);
       void capMult;
       const fill = node.inv[res] ?? 0;
       if (res === 'data' || res === 'credits') {
-        // The fuller the buffer, the faster it drains into the reserve.
-        const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
+        // The fuller the buffer, the faster it drains into the reserve (modules can throttle it).
+        let drainMult = 1;
+        for (const mid of node.modules) {
+          const m = MODULE_DEFS.find((x) => x.id === mid);
+          if (m?.effect.drainMult) drainMult *= m.effect.drainMult;
+        }
+        const rate = TUNE.storageDrainMax * drainMult * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
         const take = Math.min(fill, rate * dt);
         if (take > 0) {
           node.inv[res] = fill - take;

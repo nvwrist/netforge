@@ -1,5 +1,15 @@
 import { NODE_DEFS, SURGE_CFG } from './data';
+import { MODULE_DEFS } from './data/modules';
 import type { GameNode, GameState } from './types';
+
+function surgeWindowBonus(node: GameNode): number {
+  let b = 0;
+  for (const mid of node.modules) {
+    const m = MODULE_DEFS.find((x) => x.id === mid);
+    if (m?.effect.surgeWindowBonus) b += m.effect.surgeWindowBonus;
+  }
+  return b;
+}
 
 // Random "Data Surge" events — a golden-cookie style hook.
 // Picks a random generator, offers an 8s click window, grants x3 for 15s.
@@ -19,7 +29,7 @@ export class SurgeManager {
       );
       if (candidates.length > 0) {
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        pick.surgeWindow = SURGE_CFG.window;
+        pick.surgeWindow = SURGE_CFG.window + surgeWindowBonus(pick);
       }
     }
   }

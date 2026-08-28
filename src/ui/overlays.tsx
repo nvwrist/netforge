@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { fmt, tr } from '../game/data';
+import { MODULE_DEFS } from '../game/data/modules';
 import type { Game } from '../game/Game';
 import { ResIcon, useGameUI } from './panels';
 
@@ -166,6 +167,33 @@ export function Overlays({ game }: { game: Game }) {
             >
               {L('prestige.cancel')}
             </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* roguelite module pick after research */}
+      {s.started && s.moduleChoice && (
+        <Modal accent="#4fe3c1">
+          <div className="text-[10px] font-bold tracking-[0.2em] text-[#4fe3c1] mb-1">◈ {L('mod.choice.title')}</div>
+          <p className="text-[11px] text-[#a9bad0] leading-snug m-0">{L('mod.choice.body')}</p>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            {s.moduleChoice.map((mid, i) => {
+              const m = MODULE_DEFS.find((x) => x.id === mid);
+              if (!m) return null;
+              return (
+                <button
+                  key={mid}
+                  onClick={() => game.chooseModule(i)}
+                  className="panel p-2.5 text-left hover:border-[#4fe3c1]/60 hover:bg-[#12201d] transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  <div className="font-display font-bold text-[11px] text-[#d5e1ef] leading-tight">{L(m.nameKey)}</div>
+                  <div className="text-[9px] text-[#7d8ca0] leading-snug mt-1">{L(m.descKey)}</div>
+                  <div className="text-[8.5px] font-bold text-[#4fe3c1] mt-1.5">
+                    {m.slotCost}⬚ · {m.appliesToCategory.map((c) => L('codex.cat.' + c).toLowerCase()).join(' / ')}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </Modal>
       )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { CATEGORY_ORDER, NODE_DEFS, RES_META, fmt, fmtRate, tr } from '../game/data';
+import { MODULE_DEFS } from '../game/data/modules';
 import type { Game } from '../game/Game';
 import type { CostEntry, ResourceId, UISnapshot } from '../game/types';
 
@@ -308,6 +309,41 @@ export function ShopPanel({ game }: { game: Game }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
+        {tab === 'nodes' && s.blueprintShop.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mt-0.5 mb-1.5">
+              <span className="font-display font-bold text-[9.5px] tracking-[0.2em] text-[#c792ff]">◈ {L('bp.shop')}</span>
+              <span className="flex-1 h-px bg-[#1c2735]" />
+            </div>
+            <div className="space-y-2">
+              {s.blueprintShop.map((bp) => (
+                <button
+                  key={bp.id}
+                  onClick={() => game.buyBlueprint(bp.id)}
+                  className="w-full text-left panel p-2.5 relative transition-all group hover:bg-[#152030] active:scale-[0.99]"
+                  style={{ borderColor: bp.afford ? bp.color + '55' : undefined }}
+                >
+                  <div className="font-display font-bold text-[12.5px] tracking-wide group-hover:text-[#3fc1ff] transition-colors" style={{ color: bp.color }}>
+                    {bp.name}
+                  </div>
+                  <div className="text-[9px] text-[#5c6b7f] mt-0.5">{L(bp.baseNameKey)} · {L('bp.built')}</div>
+                  <div className="text-[9.5px] text-[#a9bad0] mt-1 leading-relaxed">
+                    {bp.recipe.inputs.map((i, idx) => (
+                      <span key={'i' + idx}>{idx > 0 && ' + '}<b style={{ color: RES_META[i.resource].color }}>{i.amount}{L(RES_META[i.resource].nameKey).slice(0, 3)}</b></span>
+                    ))}
+                    {bp.recipe.inputs.length > 0 && ' → '}
+                    {bp.recipe.outputs.map((o, idx) => (
+                      <span key={'o' + idx}>{idx > 0 && ' + '}<b style={{ color: RES_META[o.resource].color }}>{o.amount}{L(RES_META[o.resource].nameKey).slice(0, 3)}</b></span>
+                    ))}
+                    <span className="text-[#5c6b7f]"> · {bp.recipe.time.toFixed(1)}{L('codex.sec')}</span>
+                  </div>
+                  <div className="mt-1"><CostChips cost={bp.cost} afford={bp.afford} lang={s.lang} /></div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {tab === 'nodes' && CATEGORY_ORDER.map((cat) => {
           const items = s.shop.filter((i) => NODE_DEFS[i.id].category === cat);
           if (items.length === 0) return null;
@@ -360,7 +396,11 @@ export function ShopPanel({ game }: { game: Game }) {
                 <span className="font-display font-bold text-[12px] tracking-wide text-[#c792ff]">{L('research.name')}</span>
                 <span className="text-[10px] font-bold text-[#c792ff]">{L('hud.tier')} {s.researchTier}</span>
               </div>
-              <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5 mb-1.5">{L('research.d')}</div>
+              <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5 mb-1">{L('research.d')}</div>
+              <div className="text-[9px] font-bold text-[#c792ff] mb-1.5" title={L('mod.choice.title')}>
+                ◈ {s.unlockedModuleCount}/{s.totalModuleCount}
+                {s.blueprintShop.length > 0 && <span className="ml-2 text-[#8fb7ff]">◈ {L('bp.shop')}: {s.blueprintShop.length}</span>}
+              </div>
               <button
                 onClick={() => game.buyResearch()}
                 className={`inline-flex items-center gap-2 border px-2 py-1 text-[10px] font-bold tracking-wider transition-colors ${
@@ -504,6 +544,11 @@ export function InfoPanel({ game }: { game: Game }) {
         <span className="font-display font-bold text-[13.5px] tracking-wide text-[#d5e1ef]">{L(sel.nameKey)}</span>
         <span className="text-[10px] font-bold text-[#ffb02e]">{L('info.lvl')} {sel.level}</span>
       </div>
+      {sel.blueprintName && (
+        <div className="text-[9px] font-bold tracking-wider mt-0.5" style={{ color: '#c792ff' }}>
+          ◈ {L('bp.title')}: {sel.blueprintName}
+        </div>
+      )}
       <div className="flex items-center gap-1.5 mt-1">
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor }} />
         <span className="text-[10px] font-bold tracking-wider" style={{ color: statusColor }}>{L(sel.statusKey)}</span>
@@ -544,6 +589,63 @@ export function InfoPanel({ game }: { game: Game }) {
       {sel.rateLine && (
         <div className="mt-1.5 text-[9.5px] text-[#7d8ca0]">
           {L('info.rate')}: <b className="text-[#3fc1ff]">{fmtRate(sel.rateLine.qty / sel.rateLine.time)}</b> {L(RES_META.data.nameKey).toLowerCase()}{L('hud.pcs')}
+        </div>
+      )}
+
+      {sel.modules && (
+        <div className="mt-2 pt-2 border-t border-[#223041]">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-display font-bold text-[9.5px] tracking-[0.18em] text-[#4fe3c1]">{L('mod.slots')}</span>
+            <span className="text-[9.5px] text-[#7d8ca0] font-bold">{sel.modules.used}/{sel.modules.slots}</span>
+          </div>
+          {sel.modules.installed.length === 0 && sel.modules.available.length === 0 && (
+            <div className="text-[9px] text-[#46586e] italic">{L('mod.empty')}</div>
+          )}
+          <div className="space-y-1">
+            {sel.modules.installed.map((m, i) => (
+              <div key={m.id + i} className="flex items-center gap-1.5 bg-[#10161d] border border-[#1c2735] px-1.5 py-1">
+                <span className="text-[#4fe3c1] text-[10px] leading-none">◈</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[9.5px] font-bold text-[#a9bad0] leading-tight">
+                    {L(m.nameKey)}{m.slotCost > 1 && <span className="text-[#5c6b7f]"> ·{m.slotCost}⬚</span>}
+                  </div>
+                  <div className="text-[8.5px] text-[#5c6b7f] leading-tight">{L(m.descKey)}</div>
+                </div>
+                <button
+                  onClick={() => game.removeModule(sel.id, i)}
+                  className="shrink-0 text-[8px] font-bold text-[#ff5d5d] border border-[#ff5d5d]/30 px-1 py-0.5 hover:bg-[#ff5d5d]/10 transition-colors"
+                  title={L('mod.refund')}
+                >
+                  {L('mod.remove')}
+                </button>
+              </div>
+            ))}
+          </div>
+          {sel.modules.available.length > 0 && (
+            <div className="mt-1.5 space-y-1">
+              {sel.modules.available.map((m) => (
+                <div key={m.id} className={`flex items-center gap-1.5 border px-1.5 py-1 ${m.afford ? 'border-[#4fe3c1]/25' : 'border-[#1c2735] opacity-60'}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[9.5px] font-bold text-[#d5e1ef] leading-tight">
+                      {L(m.nameKey)}{m.slotCost > 1 && <span className="text-[#5c6b7f]"> ·{m.slotCost}⬚</span>}
+                    </div>
+                    <div className="text-[8.5px] text-[#5c6b7f] leading-tight">{L(m.descKey)}</div>
+                  </div>
+                  <button
+                    onClick={() => game.installModule(sel.id, m.id)}
+                    disabled={!m.afford}
+                    className={`shrink-0 inline-flex items-center gap-1 text-[8px] font-bold border px-1 py-0.5 transition-colors ${
+                      m.afford
+                        ? 'text-[#4fe3c1] border-[#4fe3c1]/40 hover:bg-[#4fe3c1]/10'
+                        : 'text-[#5c6b7f] border-[#24303f] cursor-not-allowed'
+                    }`}
+                  >
+                    {L('mod.install')} <CostChips cost={m.cost} afford={m.afford} lang={s.lang} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

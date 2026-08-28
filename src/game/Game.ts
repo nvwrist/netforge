@@ -5,14 +5,15 @@ import {
   LEGACY_CFG, MILESTONES, NODE_DEFS, RESEARCH_CFG, RES_META, SHOP_ORDER, TECH_DEFS, TUNE,
   TUTORIAL_STEPS, UPGRADE_DEFS, fmtRate, tierGoal, tr,
 } from './data';
+import { BLUEPRINT_CFG, MODULE_CFG, MODULE_DEFS, rollBlueprint } from './data/modules';
 import { effTime, updateConnections, updateProduction } from './engine';
 import { Renderer } from './render';
 import { applySave, estimateOffline, SaveManager } from './save';
 import { SurgeManager } from './surge';
 import {
-  canPay, costOf, createConnection, findNode, inputCapFor, invResources, isUnlocked,
-  makeNode, newGame, nodeH, nodeUpgradeCost, ownedCount, pay, portPos, removeConnection,
-  removeNode, storageCapacity, techAvailable, techCost, techIsLate, toEntries,
+  canPay, costOf, createConnection, defFor, findNode, inputCapFor, invResources, isUnlocked,
+  makeNode, moduleSlots, moduleUsedSlots, newGame, nodeH, nodeUpgradeCost, ownedCount, pay,
+  portPos, removeConnection, removeNode, techAvailable, techCost, techIsLate, toEntries,
   validateConnection, NODE_W,
 } from './state';
 import type {
@@ -70,6 +71,9 @@ export class Game {
   private storageTipId: string | null = null;
   private storageTipT = 0;
   private tierMilestone = 0;
+  private pendingBlueprint: string | null = null;
+  private pendingBlueprintCost: Partial<Record<ResourceId, number>> | null = null;
+  private timeScale = 1; // dev-only fast-forward (toggle: ` key)
 
   // wallet rate tracking
   private rateTimer = 0;
@@ -147,8 +151,9 @@ export class Game {
 
   private loop = (t: number): void => {
     if (!this.running) return;
-    const dt = Math.min(0.1, Math.max(0, (t - this.lastT) / 1000));
+    const rawDt = Math.min(0.1, Math.max(0, (t - this.lastT) / 1000));
     this.lastT = t;
+    const dt = rawDt * this.timeScale; // dev fast-forward scales the whole simulation
     this.time += dt;
     this.update(dt);
     this.render();
@@ -527,7 +532,14 @@ export class Game {
       this.deleteNodeById(this.selectedId);
       return;
     }
+    if (e.key === '`' || e.key === '~') { this.toggleDev(); return; }
     this.keys.add(k);
+  }
+
+  private toggleDev(): void {
+    this.timeScale = this.timeScale > 1 ? 1 : 8;
+    this.toast('info', this.timeScale > 1 ? 'dev.fast' : 'dev.normal');
+    this.bump();
   }
 
   private onKeyUp(e: KeyboardEvent): void {
@@ -637,11 +649,13 @@ export class Game {
     const type = this.ghostType;
     if (!type) return;
     const def = NODE_DEFS[type];
-    const cost = costOf(this.state, def, ownedCount(this.state, type));
+    const cost = this.pendingBlueprintCost ?? costOf(this.state, def, ownedCount(this.state, type));
     if (!canPay(this.state.wallet, cost)) {
       this.toast('err', 'toast.notEnough');
       this.audio.error();
       this.ghostType = null;
+      this.pendingBlueprint = null;
+      this.pendingBlueprintCost = null;
       this.bump();
       return;
     }
@@ -649,8 +663,14 @@ export class Game {
     const x = Math.max(-4000, Math.min(4000, wx - NODE_W / 2));
     const y = Math.max(-4000, Math.min(4000, wy - nodeH(def) / 2));
     const node = makeNode(this.state, type, x, y);
+    if (this.pendingBlueprint) {
+      node.blueprintId = this.pendingBlueprint;
+      node.flashColor = this.state.blueprints.find((b) => b.id === this.pendingBlueprint)?.color ?? '#3fc1ff';
+      this.pendingBlueprint = null;
+      this.pendingBlueprintCost = null;
+    }
     node.flash = 1;
-    node.flashColor = '#3fc1ff';
+    node.flashColor = node.flashColor || '#3fc1ff';
     this.selectedId = node.id;
     this.state.stats.placed++;
     this.state.stats.life.nodes = this.state.stats.placed;
@@ -670,6 +690,8 @@ export class Game {
 
   cancelPlacement(): void {
     this.ghostType = null;
+    this.pendingBlueprint = null;
+    this.pendingBlueprintCost = null;
     this.bump();
   }
 
@@ -739,7 +761,103 @@ export class Game {
     this.state.researchTier++;
     this.audio.tech();
     this.toast('ok', 'toast.research', { t: String(this.state.researchTier) });
+    // Endless research rewards: periodic blueprint + roguelite module pick.
+    if (this.state.researchTier % BLUEPRINT_CFG.everyTier === 0) {
+      const bp = rollBlueprint('bp' + (this.state.seq++), this.state.blueprints.length + 1);
+      this.state.blueprints.push(bp);
+      this.toast('ok', 'bp.toast', { name: bp.name });
+    } else {
+      const locked = MODULE_DEFS.filter((m) => !this.state.unlockedModules.includes(m.id));
+      if (locked.length >= 2) {
+        this.state.moduleChoice = [...locked].sort(() => Math.random() - 0.5).slice(0, 2).map((m) => m.id);
+      } else if (locked.length === 1) {
+        this.state.unlockedModules.push(locked[0].id);
+        this.toast('ok', 'mod.unlocked', { name: tr(this.state.lang, locked[0].nameKey) });
+      }
+    }
     this.persist();
+    this.bump();
+  }
+
+  chooseModule(idx: number): void {
+    const choice = this.state.moduleChoice;
+    if (!choice || !choice[idx]) return;
+    const id = choice[idx];
+    if (!this.state.unlockedModules.includes(id)) this.state.unlockedModules.push(id);
+    this.state.moduleChoice = null;
+    const def = MODULE_DEFS.find((m) => m.id === id);
+    if (def) this.toast('ok', 'mod.unlocked', { name: tr(this.state.lang, def.nameKey) });
+    this.audio.tech();
+    this.persist();
+    this.bump();
+  }
+
+  installModule(nodeId: string, moduleId: string): void {
+    const node = findNode(this.state, nodeId);
+    const def = MODULE_DEFS.find((m) => m.id === moduleId);
+    if (!node || !def) return;
+    if (!def.appliesToCategory.includes(NODE_DEFS[node.type].category)) return;
+    if (moduleUsedSlots(node) + def.slotCost > moduleSlots(node)) {
+      this.toast('err', 'toast.noSlots');
+      this.audio.error();
+      return;
+    }
+    if (!canPay(this.state.wallet, def.cost)) {
+      this.toast('err', 'toast.notEnough');
+      this.audio.error();
+      return;
+    }
+    pay(this.state.wallet, def.cost);
+    node.modules.push(moduleId);
+    node.flash = 1;
+    node.flashColor = '#4fe3c1';
+    this.audio.upgrade();
+    this.toast('ok', 'toast.modInstall');
+    this.spawnParticles(node.x + NODE_W / 2, node.y + 20, '#4fe3c1', 10);
+    this.persist();
+    this.bump();
+  }
+
+  removeModule(nodeId: string, index: number): void {
+    const node = findNode(this.state, nodeId);
+    if (!node || index < 0 || index >= node.modules.length) return;
+    const id = node.modules[index];
+    const def = MODULE_DEFS.find((m) => m.id === id);
+    node.modules.splice(index, 1);
+    if (def) {
+      (Object.keys(def.cost) as ResourceId[]).forEach((r) => {
+        const back = Math.floor((def.cost[r] ?? 0) * MODULE_CFG.refundRate);
+        if (r === 'credits') this.state.wallet.credits += back;
+        else this.state.wallet.data += back;
+      });
+    }
+    this.audio.remove();
+    this.toast('info', 'toast.modRemove');
+    this.persist();
+    this.bump();
+  }
+
+  buyBlueprint(bpId: string): void {
+    const bp = this.state.blueprints.find((b) => b.id === bpId);
+    if (!bp) return;
+    const def = NODE_DEFS[bp.baseType];
+    const cost: Partial<Record<ResourceId, number>> = {};
+    (Object.keys(def.cost) as ResourceId[]).forEach((r) => {
+      cost[r] = Math.ceil((def.cost[r] ?? 0) * bp.costMult);
+    });
+    if (!canPay(this.state.wallet, cost)) {
+      this.toast('err', 'toast.notEnough');
+      this.audio.error();
+      return;
+    }
+    this.ghostType = bp.baseType;
+    this.pendingBlueprint = bp.id;
+    this.pendingBlueprintCost = cost;
+    const c = this.camera.screenToWorld(this.w / 2, this.h / 2);
+    this.ghostPos = { x: c.x - NODE_W / 2, y: c.y - nodeH(def) / 2 };
+    this.selectedId = null;
+    this.audio.buy();
+    if (window.innerWidth < 900) this.shopOpen = false;
     this.bump();
   }
 
@@ -1024,27 +1142,64 @@ export class Game {
     const node = this.selectedId ? findNode(s, this.selectedId) : null;
     if (node) {
       const def = NODE_DEFS[node.type];
+      const dEff = defFor(s, node);
       const bars = invResources(def).map((res) => ({
         res,
         cur: node.inv[res] ?? 0,
-        cap: def.category === 'storage' ? storageCapacity(s) : inputCapFor(s, node, res),
+        cap: inputCapFor(s, node, res),
       }));
       const t = effTime(s, node, now);
       const uc = nodeUpgradeCost(node);
+      const slots = moduleSlots(node);
+      const used = moduleUsedSlots(node);
+      const installed = node.modules.flatMap((mid) => {
+        const m = MODULE_DEFS.find((x) => x.id === mid);
+        return m ? [{ id: m.id, nameKey: m.nameKey, descKey: m.descKey, slotCost: m.slotCost }] : [];
+      });
+      const available = MODULE_DEFS
+        .filter((m) => s.unlockedModules.includes(m.id)
+          && m.appliesToCategory.includes(def.category)
+          && !node.modules.includes(m.id))
+        .map((m) => ({
+          id: m.id, nameKey: m.nameKey, descKey: m.descKey, slotCost: m.slotCost,
+          cost: toEntries(m.cost),
+          afford: canPay(s.wallet, m.cost) && used + m.slotCost <= slots,
+        }));
+      const bp = node.blueprintId ? s.blueprints.find((b) => b.id === node.blueprintId) : null;
       selected = {
         id: node.id, type: node.type, nameKey: def.nameKey, level: node.level,
         statusKey: 'st.' + node.status,
         bars,
-        recipe: def.recipe ? { inputs: def.recipe.inputs, outputs: def.recipe.outputs, time: t } : null,
-        rateLine: def.category === 'generator' && def.recipe
-          ? { qty: def.recipe.outputs[0].amount * (1 + TUNE.nodeQtyPerLevel * (node.level - 1)), time: t }
+        recipe: dEff.recipe ? { inputs: dEff.recipe.inputs, outputs: dEff.recipe.outputs, time: t } : null,
+        rateLine: def.category === 'generator' && dEff.recipe
+          ? { qty: dEff.recipe.outputs[0].amount * (1 + TUNE.nodeQtyPerLevel * (node.level - 1)), time: t }
           : null,
         upgradeCost: uc,
         canUpgrade: node.level < TUNE.nodeMaxLevel && canPay(s.wallet, { [uc.res]: uc.amount }),
         maxed: node.level >= TUNE.nodeMaxLevel,
         surge: node.surgeActive,
+        modules: { slots, used, installed, available },
+        blueprintName: bp?.name ?? null,
       };
     }
+
+    const blueprintShop = s.blueprints.map((bp) => {
+      const d = NODE_DEFS[bp.baseType];
+      const cost: Partial<Record<ResourceId, number>> = {};
+      (Object.keys(d.cost) as ResourceId[]).forEach((r) => {
+        cost[r] = Math.ceil((d.cost[r] ?? 0) * bp.costMult);
+      });
+      return {
+        id: bp.id, name: bp.name, color: bp.color,
+        baseType: bp.baseType, baseNameKey: d.nameKey,
+        cost: toEntries(cost), afford: canPay(s.wallet, cost),
+        recipe: d.recipe ? {
+          inputs: d.recipe.inputs.map((i) => ({ resource: i.resource, amount: Math.max(1, Math.round(i.amount * bp.inputMult)) })),
+          outputs: d.recipe.outputs.map((o) => ({ resource: o.resource, amount: Math.max(1, Math.round(o.amount * bp.outputMult)) })),
+          time: Math.max(0.5, d.recipe.time * bp.timeMult),
+        } : { inputs: [], outputs: [], time: 0 },
+      };
+    });
 
     return {
       v: (this.snapshot?.v ?? 0) + 1,
@@ -1063,6 +1218,10 @@ export class Game {
       researchTier: s.researchTier,
       researchCost: toEntries({ credits: Math.round(RESEARCH_CFG.base * Math.pow(RESEARCH_CFG.growth, s.researchTier)) }),
       researchAfford: s.wallet.credits >= RESEARCH_CFG.base * Math.pow(RESEARCH_CFG.growth, s.researchTier),
+      moduleChoice: s.moduleChoice,
+      unlockedModuleCount: s.unlockedModules.length,
+      totalModuleCount: MODULE_DEFS.length,
+      blueprintShop,
       nodeCount: s.nodes.length, connCount: s.connections.length,
       flowRate: this.flowRate,
       selected,

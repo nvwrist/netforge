@@ -25,7 +25,7 @@ export const TUNE = {
   travelTime: 1.15,
   baseRate: 2.0,
   bwMultPerLevel: 1.5,
-  storageDrainMax: 1.4,   // reserve conversion at 100% fill
+  storageDrainMax: 0.9,   // reserve conversion at 100% fill (slower, buffer stays visible)
   storageDrainExp: 1.3,   // drain ∝ fill^exp  → fuller = faster
   capPerLevel: 0.5,
   speedPerLevel: 0.88,
@@ -40,10 +40,12 @@ export const TUNE = {
 // ── Endless progression configs ──────────────────────────────────────────────
 
 export const SURGE_CFG = { intervalMin: 40, intervalMax: 90, window: 8, active: 15, mult: 3 };
-export const TIER_CFG = { base: 100, growth: 5, bonusPerTier: 0.10 };
+export const TIER_CFG = { base: 150, growth: 5, bonusPerTier: 0.10 };
 export const LEGACY_CFG = { divisor: 10, multPerPoint: 0.02, costScale: 1.2, startDataBonus: 0.25 };
-export const RESEARCH_CFG = { base: 100, growth: 2.2, bonusPerTier: 0.08 };
+export const RESEARCH_CFG = { base: 300, growth: 2.5, bonusPerTier: 0.08 };
 export const TECH_LATE_MULT = 3;
+// каждая открытая технология удорожает следующую на 50% — растягивает поздний темп
+export const TECH_COST_SCALE = 1.5;
 export const MILESTONES = [25, 50, 75];
 
 export function tierGoal(tier: number): number {
@@ -55,76 +57,76 @@ export function tierGoal(tier: number): number {
 export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   relay: {
     id: 'relay', nameKey: 'nd.relay', descKey: 'nd.relay.d',
-    category: 'generator', cost: { [D]: 20 }, costGrowth: 1.12,
+    category: 'generator', cost: { [D]: 25 }, costGrowth: 1.12,
     inputs: [], outputs: [D],
-    recipe: { inputs: [], outputs: [{ resource: D, amount: 1 }], time: 1.8 },
+    recipe: { inputs: [], outputs: [{ resource: D, amount: 1 }], time: 2.2 },
     capacity: 20,
   },
   storage: {
     id: 'storage', nameKey: 'nd.storage', descKey: 'nd.storage.d',
-    category: 'storage', cost: { [D]: 50 }, costGrowth: 1.15,
+    category: 'storage', cost: { [D]: 60 }, costGrowth: 1.15,
     inputs: [D], outputs: [D],
     capacity: 120,
   },
   cache: {
     id: 'cache', nameKey: 'nd.cache', descKey: 'nd.cache.d',
-    category: 'transfer', cost: { [D]: 35 }, costGrowth: 1.15,
+    category: 'transfer', cost: { [D]: 45 }, costGrowth: 1.15,
     inputs: [D], outputs: [D],
     capacity: 40,
   },
   compute: {
     id: 'compute', nameKey: 'nd.compute', descKey: 'nd.compute.d',
-    category: 'generator', cost: { [D]: 100 }, costGrowth: 1.15,
+    category: 'generator', cost: { [D]: 140 }, costGrowth: 1.15,
     inputs: [], outputs: ['compute'],
-    recipe: { inputs: [], outputs: [{ resource: 'compute', amount: 1 }], time: 3 },
+    recipe: { inputs: [], outputs: [{ resource: 'compute', amount: 1 }], time: 4 },
     capacity: 15,
   },
   router: {
     id: 'router', nameKey: 'nd.router', descKey: 'nd.router.d',
-    category: 'transfer', cost: { [D]: 100 }, costGrowth: 1.18,
+    category: 'transfer', cost: { [D]: 120 }, costGrowth: 1.18,
     inputs: [D, D], outputs: [D, D],
     capacity: 12,
   },
   balancer: {
     id: 'balancer', nameKey: 'nd.balancer', descKey: 'nd.balancer.d',
-    category: 'transfer', cost: { [D]: 400 }, costGrowth: 1.22,
+    category: 'transfer', cost: { [D]: 900 }, costGrowth: 1.22,
     inputs: [D, D], outputs: [D, D, D, D],
     capacity: 60, tech: 'routing',
   },
   proxy: {
     id: 'proxy', nameKey: 'nd.proxy', descKey: 'nd.proxy.d',
-    category: 'processor', cost: { [D]: 250 }, costGrowth: 1.2,
+    category: 'processor', cost: { [D]: 350 }, costGrowth: 1.2,
     inputs: [D], outputs: ['processed'],
-    recipe: { inputs: [{ resource: D, amount: 2 }], outputs: [{ resource: 'processed', amount: 1 }], time: 2.5 },
+    recipe: { inputs: [{ resource: D, amount: 2 }], outputs: [{ resource: 'processed', amount: 1 }], time: 2.8 },
     capacity: 10, tech: 'routing',
   },
   processor: {
     id: 'processor', nameKey: 'nd.processor', descKey: 'nd.processor.d',
-    category: 'processor', cost: { [D]: 350 }, costGrowth: 1.2,
+    category: 'processor', cost: { [D]: 600 }, costGrowth: 1.22,
     inputs: [D, 'compute'], outputs: [],
     recipe: {
       inputs: [{ resource: D, amount: 2 }, { resource: 'compute', amount: 1 }],
-      outputs: [{ resource: 'fragment', amount: 1 }], time: 4,
+      outputs: [{ resource: 'fragment', amount: 1 }], time: 5,
     },
     capacity: 10, tech: 'processing',
   },
   archive: {
     id: 'archive', nameKey: 'nd.archive', descKey: 'nd.archive.d',
-    category: 'processor', cost: { [D]: 300 }, costGrowth: 1.22,
+    category: 'processor', cost: { [D]: 500 }, costGrowth: 1.22,
     inputs: [D], outputs: [],
-    recipe: { inputs: [{ resource: D, amount: 4 }], outputs: [{ resource: 'credits', amount: 2 }], time: 4 },
+    recipe: { inputs: [{ resource: D, amount: 4 }], outputs: [{ resource: 'credits', amount: 2 }], time: 4.5 },
     capacity: 12, tech: 'processing',
   },
   firewall: {
     id: 'firewall', nameKey: 'nd.firewall', descKey: 'nd.firewall.d',
-    category: 'processor', cost: { [D]: 600 }, costGrowth: 1.2,
+    category: 'processor', cost: { [D]: 1200 }, costGrowth: 1.22,
     inputs: [D], outputs: ['filtered'],
     recipe: { inputs: [{ resource: D, amount: 3 }], outputs: [{ resource: 'filtered', amount: 2 }], time: 3 },
     capacity: 10, tech: 'security',
   },
   encryption: {
     id: 'encryption', nameKey: 'nd.encryption', descKey: 'nd.encryption.d',
-    category: 'processor', cost: { [D]: 800 }, costGrowth: 1.25,
+    category: 'processor', cost: { [D]: 2200 }, costGrowth: 1.25,
     inputs: ['filtered', 'compute'], outputs: ['encrypted'],
     recipe: {
       inputs: [{ resource: 'filtered', amount: 2 }, { resource: 'compute', amount: 1 }],
@@ -134,7 +136,7 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   refinery: {
     id: 'refinery', nameKey: 'nd.refinery', descKey: 'nd.refinery.d',
-    category: 'processor', cost: { credits: 120 }, costGrowth: 1.3,
+    category: 'processor', cost: { credits: 380 }, costGrowth: 1.3,
     inputs: ['processed', 'filtered'], outputs: [],
     recipe: {
       inputs: [{ resource: 'processed', amount: 1 }, { resource: 'filtered', amount: 1 }],
@@ -144,7 +146,7 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   datacenter: {
     id: 'datacenter', nameKey: 'nd.datacenter', descKey: 'nd.datacenter.d',
-    category: 'processor', cost: { [D]: 1500 }, costGrowth: 1.3,
+    category: 'processor', cost: { [D]: 4500 }, costGrowth: 1.3,
     inputs: ['processed', 'encrypted', 'compute'], outputs: [],
     recipe: {
       inputs: [
@@ -157,14 +159,14 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   hub: {
     id: 'hub', nameKey: 'nd.hub', descKey: 'nd.hub.d',
-    category: 'transfer', cost: { credits: 80 }, costGrowth: 1.3,
+    category: 'transfer', cost: { credits: 260 }, costGrowth: 1.3,
     inputs: [D, D, D, D],
     outputs: [D, D, D, D],
     capacity: 24, tech: 'distributed',
   },
   core: {
     id: 'core', nameKey: 'nd.core', descKey: 'nd.core.d',
-    category: 'processor', cost: { credits: 2500 }, costGrowth: 1.5,
+    category: 'processor', cost: { credits: 8000 }, costGrowth: 1.5,
     inputs: [D, 'compute'], outputs: [],
     recipe: {
       inputs: [{ resource: D, amount: 5 }, { resource: 'compute', amount: 2 }],
@@ -175,20 +177,20 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   // ── Волна сырья: сенсоры → сигнал → анализ (Path A / телеметрия) ──
   sensor: {
     id: 'sensor', nameKey: 'nd.sensor', descKey: 'nd.sensor.d',
-    category: 'generator', cost: { credits: 60 }, costGrowth: 1.2,
+    category: 'generator', cost: { credits: 160 }, costGrowth: 1.2,
     inputs: [], outputs: ['signal'],
     recipe: { inputs: [], outputs: [{ resource: 'signal', amount: 1 }], time: 2.2 },
     capacity: 15, tech: 'telemetry',
   },
   signalbuffer: {
     id: 'signalbuffer', nameKey: 'nd.signalbuffer', descKey: 'nd.signalbuffer.d',
-    category: 'storage', cost: { credits: 40 }, costGrowth: 1.2,
+    category: 'storage', cost: { credits: 110 }, costGrowth: 1.2,
     inputs: ['signal'], outputs: ['signal'],
     capacity: 24, tech: 'telemetry',
   },
   analyzer: {
     id: 'analyzer', nameKey: 'nd.analyzer', descKey: 'nd.analyzer.d',
-    category: 'processor', cost: { credits: 150 }, costGrowth: 1.25,
+    category: 'processor', cost: { credits: 420 }, costGrowth: 1.25,
     inputs: ['signal', 'compute'], outputs: [],
     recipe: {
       inputs: [{ resource: 'signal', amount: 2 }, { resource: 'compute', amount: 1 }],
@@ -199,21 +201,21 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   // ── Хранилище вычислений (Path A) ──
   computebank: {
     id: 'computebank', nameKey: 'nd.computebank', descKey: 'nd.computebank.d',
-    category: 'storage', cost: { [D]: 220 }, costGrowth: 1.18,
+    category: 'storage', cost: { [D]: 400 }, costGrowth: 1.18,
     inputs: ['compute'], outputs: ['compute'],
     capacity: 24, tech: 'processing',
   },
   // ── Продвинутая маршрутизация (база) ──
   smartrouter: {
     id: 'smartrouter', nameKey: 'nd.smartrouter', descKey: 'nd.smartrouter.d',
-    category: 'transfer', cost: { [D]: 260 }, costGrowth: 1.2,
+    category: 'transfer', cost: { [D]: 420 }, costGrowth: 1.2,
     inputs: [D, D, D], outputs: [D, D, D],
     capacity: 18, tech: 'routing',
   },
   // ── Кредитные процессоры (Path B / Path A) ──
   compressor: {
     id: 'compressor', nameKey: 'nd.compressor', descKey: 'nd.compressor.d',
-    category: 'processor', cost: { [D]: 700 }, costGrowth: 1.25,
+    category: 'processor', cost: { [D]: 1500 }, costGrowth: 1.25,
     inputs: ['processed', D], outputs: [],
     recipe: {
       inputs: [{ resource: 'processed', amount: 1 }, { resource: D, amount: 2 }],
@@ -223,7 +225,7 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   assembler: {
     id: 'assembler', nameKey: 'nd.assembler', descKey: 'nd.assembler.d',
-    category: 'processor', cost: { credits: 200 }, costGrowth: 1.28,
+    category: 'processor', cost: { credits: 600 }, costGrowth: 1.28,
     inputs: ['encrypted', 'processed'], outputs: [],
     recipe: {
       inputs: [{ resource: 'encrypted', amount: 1 }, { resource: 'processed', amount: 1 }],
@@ -233,7 +235,7 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   forge: {
     id: 'forge', nameKey: 'nd.forge', descKey: 'nd.forge.d',
-    category: 'processor', cost: { credits: 400 }, costGrowth: 1.3,
+    category: 'processor', cost: { credits: 1100 }, costGrowth: 1.3,
     inputs: ['encrypted', 'compute'], outputs: [],
     recipe: {
       inputs: [{ resource: 'encrypted', amount: 1 }, { resource: 'compute', amount: 2 }],
@@ -337,6 +339,17 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   // ── Престиж ──
   { id: 'prestige1',   nameKey: 'ach.prestige1',   descKey: 'ach.prestige1.d',   condition: { type: 'prestigeCount', count: 1 },                      bonus: { kind: 'boost', target: 'all', mult: 1.15, dur: 120 } },
   { id: 'prestige3',   nameKey: 'ach.prestige3',   descKey: 'ach.prestige3.d',   condition: { type: 'prestigeCount', count: 3 },                      bonus: { kind: 'boost', target: 'all', mult: 1.2, dur: 180 } },
+  // ── Кастомизация: модули и blueprint-узлы ──
+  { id: 'mod1',        nameKey: 'ach.mod1',        descKey: 'ach.mod1.d',        condition: { type: 'modulesInstalled', count: 1 },                   bonus: { kind: 'res', res: 'credits', amount: 30 } },
+  { id: 'mod4',        nameKey: 'ach.mod4',        descKey: 'ach.mod4.d',        condition: { type: 'modulesInstalled', count: 4 },                   bonus: { kind: 'res', res: 'credits', amount: 80 } },
+  { id: 'mod10',       nameKey: 'ach.mod10',       descKey: 'ach.mod10.d',       condition: { type: 'modulesInstalled', count: 10 },                  bonus: { kind: 'boost', target: 'all', mult: 1.15, dur: 180 } },
+  { id: 'modNode3',    nameKey: 'ach.modNode3',    descKey: 'ach.modNode3.d',    condition: { type: 'modulesOnNode', count: 3 },                      bonus: { kind: 'res', res: 'credits', amount: 60 } },
+  { id: 'modVar5',     nameKey: 'ach.modVar5',     descKey: 'ach.modVar5.d',     condition: { type: 'uniqueModules', count: 5 },                      bonus: { kind: 'res', res: 'credits', amount: 100 } },
+  { id: 'modVar10',    nameKey: 'ach.modVar10',    descKey: 'ach.modVar10.d',    condition: { type: 'uniqueModules', count: 10 },                     bonus: { kind: 'boost', target: 'all', mult: 1.2, dur: 240 } },
+  { id: 'modCats3',    nameKey: 'ach.modCats3',    descKey: 'ach.modCats3.d',    condition: { type: 'moduleCategories', count: 3 },                   bonus: { kind: 'res', res: 'credits', amount: 120 } },
+  { id: 'bp1',         nameKey: 'ach.bp1',         descKey: 'ach.bp1.d',         condition: { type: 'blueprints', count: 1 },                         bonus: { kind: 'res', res: 'credits', amount: 50 } },
+  { id: 'bp3',         nameKey: 'ach.bp3',         descKey: 'ach.bp3.d',         condition: { type: 'blueprints', count: 3 },                         bonus: { kind: 'res', res: 'credits', amount: 120 } },
+  { id: 'bp5',         nameKey: 'ach.bp5',         descKey: 'ach.bp5.d',         condition: { type: 'blueprints', count: 5 },                         bonus: { kind: 'boost', target: 'all', mult: 1.2, dur: 240 } },
 ];
 
 // ── Tutorial ─────────────────────────────────────────────────────────────────
@@ -436,6 +449,43 @@ const RU: Record<string, string> = {
   'ach.tier3': 'Ядро крепнет', 'ach.tier3.d': 'Достигните тира 3 Ядра сети',
   'ach.tier5': 'Ядро-гигант', 'ach.tier5.d': 'Достигните тира 5 Ядра сети',
   'ach.prestige3': 'Циклы', 'ach.prestige3.d': 'Выполните Network Reset 3 раза',
+  'ach.mod1': 'Модернизация', 'ach.mod1.d': 'Установите первый модуль на узел',
+  'ach.mod4': 'Инженер сетей', 'ach.mod4.d': 'Установите 4 модуля',
+  'ach.mod10': 'Архитектор', 'ach.mod10.d': '10 модулей установлено суммарно',
+  'ach.modNode3': 'Полная комплектация', 'ach.modNode3.d': '3 модуля на одном узле',
+  'ach.modVar5': 'Коллекционер', 'ach.modVar5.d': '5 разных типов модулей в сети',
+  'ach.modVar10': 'Мастер кастомизации', 'ach.modVar10.d': '10 разных типов модулей в сети',
+  'ach.modCats3': 'Универсальная сборка', 'ach.modCats3.d': 'Модули на узлах трёх категорий одновременно',
+  'ach.bp1': 'Первый чертёж', 'ach.bp1.d': 'Получите blueprint-узел из исследования',
+  'ach.bp3': 'Конструктор', 'ach.bp3.d': 'Получите 3 blueprint-узла',
+  'ach.bp5': 'Серийное производство', 'ach.bp5.d': 'Получите 5 blueprint-узлов',
+  'mod.overclock': 'РАЗГОН', 'mod.overclock.d': 'Циклы на 50% быстрее, но буферы −30%.',
+  'mod.bulkBuffer': 'ОБЪЁМНЫЙ БУФЕР', 'mod.bulkBuffer.d': '+80% к вместимости, −20% к скорости.',
+  'mod.deepStore': 'ГЛУБОКОЕ ХРАНИЛИЩЕ', 'mod.deepStore.d': 'Вместимость ×2.5, конвертация в резерв −40%.',
+  'mod.coldStorage': 'ХОЛОДНОЕ ХРАНИЛИЩЕ', 'mod.coldStorage.d': '+60% вместимости, дренаж в резерв −25%.',
+  'mod.byproduct': 'ЭКСТРАКТОР ПОБОЧКИ', 'mod.byproduct.d': '+1 кредит за цикл, но первый вход +1.',
+  'mod.scrapHarvester': 'СБОРЩИК ОБРЕЗКОВ', 'mod.scrapHarvester.d': '+1 DATA в резерв за цикл, первый вход +1.',
+  'mod.efficiencyCore': 'ЯДРО ЭФФЕКТИВНОСТИ', 'mod.efficiencyCore.d': 'Первый вход рецепта −1 (минимум 1). Занимает 2 слота.',
+  'mod.redundancy': 'РЕЗЕРВНЫЙ КОНТУР', 'mod.redundancy.d': '8 секунд работает без входа, но всегда −15% скорости.',
+  'mod.neuralCache': 'НЕЙРОКЭШ', 'mod.neuralCache.d': '+60% скорости, −40% вместимости. 2 слота.',
+  'mod.heatSink': 'РАДИАТОР', 'mod.heatSink.d': '+50% вместимости, −10% скорости.',
+  'mod.fluxCapacitor': 'ФЛЮКС-КОНДЕНСАТОР', 'mod.fluxCapacitor.d': '+30% скорости генерации, −15% буфера.',
+  'mod.twinCoil': 'ДВОЙНАЯ КАТУШКА', 'mod.twinCoil.d': '+1 DATA за цикл генератора. 2 слота.',
+  'mod.surgeTap': 'ЛОВЕШКА ВСПЛЕСКОВ', 'mod.surgeTap.d': 'Окно поимки всплеска данных +4 секунды.',
+  'mod.packetRouter': 'ПАКЕТНЫЙ КОММУТАТОР', 'mod.packetRouter.d': 'Буфер передачи ×2.',
+  'mod.qosBalancer': 'QoS-БАЛАНСИР', 'mod.qosBalancer.d': '+40% к буферу передачи.',
+  'mod.harmonicFilter': 'ГАРМОНИЧЕСКИЙ ФИЛЬТР', 'mod.harmonicFilter.d': '+1 отфильтрованные данные за цикл, первый вход +1.',
+  'mod.slots': 'СЛОТЫ', 'mod.install': 'УСТАНОВИТЬ', 'mod.remove': 'СНЯТЬ',
+  'mod.refund': 'возврат 50%', 'mod.empty': 'пусто',
+  'mod.choice.title': 'ПРОРЫВ ИССЛЕДОВАНИЯ',
+  'mod.choice.body': 'Лаборатория собрала два прототипа. Разблокируйте один модуль:',
+  'mod.unlocked': 'Модуль разблокирован: {name}',
+  'bp.title': 'ЧЕРТЁЖ', 'bp.shop': 'ЧЕРТЕЖИ',
+  'bp.toast': 'Получен чертёж: {name}',
+  'bp.built': 'Особый вариант узла со случайными характеристиками рецепта.',
+  'toast.modInstall': 'Модуль установлен', 'toast.modRemove': 'Модуль снят: возврат 50%',
+  'toast.noSlots': 'Нет свободных слотов',
+  'dev.fast': 'DEV: время ×8', 'dev.normal': 'DEV: время ×1',
   'help.title': 'РУКОВОДСТВО ОПЕРАТОРА',
   'help.d1': 'ЛКМ — выбрать узел, тянуть — переместить',
   'help.d2': 'Тянуть с порта OUT на порт IN — создать связь',
@@ -642,6 +692,43 @@ const EN: Record<string, string> = {
   'ach.tier3': 'Core hardens', 'ach.tier3.d': 'Reach Network Core tier 3',
   'ach.tier5': 'Core colossus', 'ach.tier5.d': 'Reach Network Core tier 5',
   'ach.prestige3': 'Cycles', 'ach.prestige3.d': 'Perform 3 Network Resets',
+  'ach.mod1': 'Modded', 'ach.mod1.d': 'Install your first module on a node',
+  'ach.mod4': 'Network engineer', 'ach.mod4.d': 'Install 4 modules',
+  'ach.mod10': 'Architect', 'ach.mod10.d': '10 modules installed in total',
+  'ach.modNode3': 'Fully loaded', 'ach.modNode3.d': '3 modules on a single node',
+  'ach.modVar5': 'Collector', 'ach.modVar5.d': '5 different module types in your network',
+  'ach.modVar10': 'Customization master', 'ach.modVar10.d': '10 different module types in your network',
+  'ach.modCats3': 'Universal build', 'ach.modCats3.d': 'Modules on nodes of three categories at once',
+  'ach.bp1': 'First blueprint', 'ach.bp1.d': 'Receive a blueprint node from research',
+  'ach.bp3': 'Constructor', 'ach.bp3.d': 'Receive 3 blueprint nodes',
+  'ach.bp5': 'Mass production', 'ach.bp5.d': 'Receive 5 blueprint nodes',
+  'mod.overclock': 'OVERCLOCK CHIP', 'mod.overclock.d': 'Cycles 50% faster, but buffers −30%.',
+  'mod.bulkBuffer': 'BULK BUFFER', 'mod.bulkBuffer.d': '+80% capacity, −20% speed.',
+  'mod.deepStore': 'DEEP STORE', 'mod.deepStore.d': 'Capacity ×2.5, reserve conversion −40%.',
+  'mod.coldStorage': 'COLD STORAGE', 'mod.coldStorage.d': '+60% capacity, reserve drain −25%.',
+  'mod.byproduct': 'BYPRODUCT EXTRACTOR', 'mod.byproduct.d': '+1 credit per cycle, but first input +1.',
+  'mod.scrapHarvester': 'SCRAP HARVESTER', 'mod.scrapHarvester.d': '+1 DATA to reserve per cycle, first input +1.',
+  'mod.efficiencyCore': 'EFFICIENCY CORE', 'mod.efficiencyCore.d': 'First recipe input −1 (min 1). Takes 2 slots.',
+  'mod.redundancy': 'REDUNDANCY MODULE', 'mod.redundancy.d': 'Runs 8s without input, but always −15% speed.',
+  'mod.neuralCache': 'NEURAL CACHE', 'mod.neuralCache.d': '+60% speed, −40% capacity. 2 slots.',
+  'mod.heatSink': 'HEAT SINK', 'mod.heatSink.d': '+50% capacity, −10% speed.',
+  'mod.fluxCapacitor': 'FLUX CAPACITOR', 'mod.fluxCapacitor.d': '+30% generation speed, −15% buffer.',
+  'mod.twinCoil': 'TWIN COIL', 'mod.twinCoil.d': '+1 DATA per generator cycle. 2 slots.',
+  'mod.surgeTap': 'SURGE TAP', 'mod.surgeTap.d': 'Data surge catch window +4 seconds.',
+  'mod.packetRouter': 'PACKET ROUTER', 'mod.packetRouter.d': 'Transfer buffer ×2.',
+  'mod.qosBalancer': 'QOS BALANCER', 'mod.qosBalancer.d': '+40% transfer buffer.',
+  'mod.harmonicFilter': 'HARMONIC FILTER', 'mod.harmonicFilter.d': '+1 filtered data per cycle, first input +1.',
+  'mod.slots': 'SLOTS', 'mod.install': 'INSTALL', 'mod.remove': 'REMOVE',
+  'mod.refund': '50% refund', 'mod.empty': 'empty',
+  'mod.choice.title': 'RESEARCH BREAKTHROUGH',
+  'mod.choice.body': 'The lab assembled two prototypes. Unlock one module:',
+  'mod.unlocked': 'Module unlocked: {name}',
+  'bp.title': 'BLUEPRINT', 'bp.shop': 'BLUEPRINTS',
+  'bp.toast': 'Blueprint received: {name}',
+  'bp.built': 'A special node variant with randomized recipe stats.',
+  'toast.modInstall': 'Module installed', 'toast.modRemove': 'Module removed: 50% refund',
+  'toast.noSlots': 'No free slots',
+  'dev.fast': 'DEV: time ×8', 'dev.normal': 'DEV: time ×1',
   'help.title': "OPERATOR'S GUIDE",
   'help.d1': 'LMB — select node, drag to move',
   'help.d2': 'Drag from an OUT port to an IN port — create a link',

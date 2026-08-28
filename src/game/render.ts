@@ -290,8 +290,15 @@ export class Renderer {
     ctx.font = '700 11px Rajdhani, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const name = tr(v.state.lang, def.nameKey);
+    const bp = node.blueprintId ? v.state.blueprints.find((b) => b.id === node.blueprintId) : undefined;
+    const name = bp ? bp.name : tr(v.state.lang, def.nameKey);
+    if (bp) {
+      ctx.fillStyle = bp.color;
+      ctx.fillRect(x, y, 3, h);
+      ctx.fillStyle = bp.color;
+    }
     ctx.fillText(name, x + 8, y + 13.5, w - 70);
+    ctx.fillStyle = '#d5e1ef';
     if (node.level > 1) {
       ctx.fillStyle = '#ffb02e';
       ctx.font = '700 9px Rajdhani, sans-serif';
@@ -350,7 +357,7 @@ export class Renderer {
     for (const res of bars) {
       const cur = node.inv[res] ?? 0;
       const cap = def.category === 'storage'
-        ? storageCapFor(v.state, def)
+        ? storageCapFor(v.state, node)
         : inputCapFor(v.state, node, res) || def.capacity;
       const meta = RES_META[res];
       ctx.fillStyle = '#7d8ca0';
@@ -390,7 +397,7 @@ export class Renderer {
     // storage → reserve live indicator (P1: visible cause & effect).
     // Only data-storage drains into the wallet reserve.
     if (def.category === 'storage' && def.inputs[0] === 'data') {
-      const cap = storageCapFor(v.state, def);
+      const cap = storageCapFor(v.state, node);
       const fill = node.inv.data ?? 0;
       const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
       const py = y + h - 19;
@@ -556,6 +563,7 @@ export class Renderer {
     const tmp: GameNode = {
       id: 'ghost', type, x: gx, y: gy, level: 1, inv: {}, prod: 0,
       status: 'idle', statusT: 0, flash: 0, flashColor: '#fff', surgeWindow: 0, surgeActive: 0,
+      modules: [], blueprintId: null, redundancyT: 0,
       ports: def.outputs.map((r, i) => ({ id: `g|out${i}`, nodeId: 'g', dir: 'out' as const, resource: r, connectionId: null })),
     };
     for (const port of tmp.ports) {

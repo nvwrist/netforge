@@ -1,4 +1,4 @@
-import { ACHIEVEMENTS } from './data';
+import { ACHIEVEMENTS, NODE_DEFS } from './data';
 import { ownedCount } from './state';
 import type {
   AchievementCondition, AchievementDef, GameState, NodeTypeId, ResourceId,
@@ -78,6 +78,25 @@ export function evaluateCondition(state: GameState, cond: AchievementCondition, 
     case 'nodeTypeVariety': {
       const types = new Set(state.nodes.map((n) => n.type));
       return types.size >= cond.count;
+    }
+    case 'modulesInstalled': {
+      let total = 0;
+      for (const n of state.nodes) total += n.modules.length;
+      return total >= cond.count;
+    }
+    case 'modulesOnNode':
+      return state.nodes.some((n) => n.modules.length >= cond.count);
+    case 'uniqueModules': {
+      const set = new Set<string>();
+      for (const n of state.nodes) for (const m of n.modules) set.add(m);
+      return set.size >= cond.count;
+    }
+    case 'blueprints':
+      return state.blueprints.length >= cond.count;
+    case 'moduleCategories': {
+      const cats = new Set<string>();
+      for (const n of state.nodes) if (n.modules.length > 0) cats.add(NODE_DEFS[n.type].category);
+      return cats.size >= cond.count;
     }
     default:
       return false;

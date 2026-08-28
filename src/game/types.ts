@@ -65,7 +65,12 @@ export type AchievementCondition =
   | { type: 'techCount'; count: number }
   | { type: 'coreTier'; tier: number }
   | { type: 'prestigeCount'; count: number }
-  | { type: 'nodeTypeVariety'; count: number };
+  | { type: 'nodeTypeVariety'; count: number }
+  | { type: 'modulesInstalled'; count: number }
+  | { type: 'modulesOnNode'; count: number }
+  | { type: 'uniqueModules'; count: number }
+  | { type: 'blueprints'; count: number }
+  | { type: 'moduleCategories'; count: number };
 
 export interface AchievementDef {
   id: string;
@@ -73,6 +78,43 @@ export interface AchievementDef {
   descKey: string;
   condition: AchievementCondition;
   bonus: AchievementBonusRes | AchievementBonusBoost;
+}
+
+// ── Modules (per-node qualitative customization) ─────────────────────────────
+
+export interface ModuleEffect {
+  speedMult?: number;          // e.g. 1.5 — 50% faster cycles
+  capacityMult?: number;       // e.g. 0.7 — trade-off: smaller buffers
+  outputBonus?: { resource: ResourceId; amount: number }; // byproduct per cycle
+  inputReduction?: number;     // −N from the first recipe input (min 1)
+  inputExtra?: number;         // +N to the first recipe input (byproduct cost)
+  drainMult?: number;          // storage → reserve conversion multiplier
+  redundancySec?: number;      // keep producing while starved (internal buffer)
+  surgeWindowBonus?: number;   // extra seconds to catch a data surge
+}
+
+export interface ModuleDef {
+  id: string;
+  nameKey: string;
+  descKey: string;
+  appliesToCategory: NodeCategory[];
+  cost: Partial<Record<ResourceId, number>>;
+  effect: ModuleEffect;
+  slotCost: number;
+}
+
+// ── Procedural blueprints (endless research rewards) ─────────────────────────
+
+export interface BlueprintDef {
+  id: string;
+  baseType: NodeTypeId;
+  name: string;        // procedurally generated display name
+  color: string;       // accent color
+  inputMult: number;   // recipe input amounts multiplier
+  outputMult: number;  // recipe output amounts multiplier
+  timeMult: number;    // recipe time multiplier
+  capacityMult: number;
+  costMult: number;
 }
 
 export interface Port {
@@ -98,6 +140,9 @@ export interface GameNode {
   flashColor: string;
   surgeWindow: number;  // s left to click
   surgeActive: number;  // s of x3 left
+  modules: string[];        // installed ModuleDef ids
+  blueprintId: string | null;
+  redundancyT: number;      // s of redundancy buffer left
 }
 
 export interface Packet { t: number; amount: number; resource: ResourceId }
@@ -129,6 +174,9 @@ export interface GameState {
   researchTier: number;    // endless research level
   achievements: string[];
   boosts: Record<string, number>; // achievementId → expires at playtime seconds
+  unlockedModules: string[];      // ModuleDef ids unlocked via research
+  moduleChoice: string[] | null;  // pending roguelite pick of 2 modules
+  blueprints: BlueprintDef[];     // procedurally generated node variants
   nodes: GameNode[];
   connections: Connection[];
   techs: TechId[];
@@ -167,6 +215,21 @@ export interface AchievementItem {
 }
 export interface ScoreEntry { name: string; power: number; tier: number; ts: number }
 
+export interface BlueprintShopItem {
+  id: string; name: string; color: string;
+  baseType: NodeTypeId; baseNameKey: string;
+  cost: CostEntry[]; afford: boolean;
+  recipe: { inputs: RecipeIo[]; outputs: RecipeIo[]; time: number };
+}
+
+export interface InstalledModuleInfo { id: string; nameKey: string; descKey: string; slotCost: number }
+export interface AvailableModuleInfo { id: string; nameKey: string; descKey: string; slotCost: number; cost: CostEntry[]; afford: boolean }
+export interface NodeModulesInfo {
+  slots: number; used: number;
+  installed: InstalledModuleInfo[];
+  available: AvailableModuleInfo[];
+}
+
 export interface SelectedInfo {
   id: string; type: NodeTypeId; nameKey: string; level: number;
   statusKey: string;
@@ -175,6 +238,8 @@ export interface SelectedInfo {
   rateLine: { qty: number; time: number } | null;
   upgradeCost: CostEntry; canUpgrade: boolean; maxed: boolean;
   surge: number;
+  modules: NodeModulesInfo | null;
+  blueprintName: string | null;
 }
 
 export interface Toast { id: number; kind: 'ok' | 'err' | 'info' | 'ach'; textKey: string; vars?: Record<string, string>; until: number }
@@ -194,6 +259,9 @@ export interface UISnapshot {
   prestigeOpen: boolean; leaderboardOpen: boolean;
   leaderboard: ScoreEntry[]; power: number;
   researchTier: number; researchCost: CostEntry[]; researchAfford: boolean;
+  moduleChoice: string[] | null;
+  unlockedModuleCount: number; totalModuleCount: number;
+  blueprintShop: BlueprintShopItem[];
   nodeCount: number; connCount: number; flowRate: number;
   selected: SelectedInfo | null;
   placement: NodeTypeId | null;

@@ -1,4 +1,5 @@
-import { LEGACY_CFG, NODE_DEFS, TECH_DEFS, TECH_LATE_MULT, TUNE } from './data';
+import { LEGACY_CFG, NODE_DEFS, TECH_COST_SCALE, TECH_DEFS, TECH_LATE_MULT, TUNE } from './data';
+import { MODULE_CFG, MODULE_DEFS } from './data/modules';
 import type {
   Connection, CostEntry, GameNode, GameState, LifeStats, NodeDef, NodeTypeId, Port,
   ResourceId, TechDef, TechId, UpgradeId, Wallet,
@@ -58,6 +59,7 @@ export function makeNode(state: GameState, type: NodeTypeId, x: number, y: numbe
     id, type, x, y, level: 1, inv: {}, prod: 0,
     status: 'idle', statusT: 0, ports, flash: 0, flashColor: '#3fc1ff',
     surgeWindow: 0, surgeActive: 0,
+    modules: [], blueprintId: null, redundancyT: 0,
   };
   state.nodes.push(node);
   return node;
@@ -193,7 +195,8 @@ export function techIsLate(state: GameState, def: TechDef): boolean {
 }
 
 export function techCost(state: GameState, def: TechDef): Partial<Record<ResourceId, number>> {
-  const mult = techIsLate(state, def) ? TECH_LATE_MULT : 1;
+  // каждая уже открытая технология удорожает следующую — темп поздней игры
+  const mult = (techIsLate(state, def) ? TECH_LATE_MULT : 1) * Math.pow(TECH_COST_SCALE, state.techs.length);
   const out: Partial<Record<ResourceId, number>> = {};
   (Object.keys(def.cost) as ResourceId[]).forEach((r) => {
     out[r] = Math.ceil((def.cost[r] ?? 0) * mult);
@@ -207,25 +210,82 @@ export function techById(id: TechId): TechDef | null {
 
 // ── Capacities ───────────────────────────────────────────────────────────────
 
-// Вместимость любого узла-хранилища с учётом глобального апгрейда «Объём хранилищ».
-export function storageCapFor(state: GameState, def: NodeDef): number {
-  return Math.round(def.capacity * (1 + TUNE.capPerLevel * state.upgrades.storageCap));
-}
-
-// Совместимость: вместимость классического хранилища ДАННЫХ.
-export function storageCapacity(state: GameState): number {
-  return storageCapFor(state, NODE_DEFS.storage);
+// Вместимость узла-хранилища: defFor учитывает модули и blueprint, апгрейд — глобальный масштаб.
+export function storageCapFor(state: GameState, node: GameNode): number {
+  return Math.round(defFor(state, node).capacity * (1 + TUNE.capPerLevel * state.upgrades.storageCap));
 }
 
 export function inputCapFor(state: GameState, node: GameNode, res: ResourceId): number {
-  const def = NODE_DEFS[node.type];
-  if (def.category === 'storage') return storageCapFor(state, def);
+  const def = defFor(state, node);
+  if (def.category === 'storage') return storageCapFor(state, node);
   if (def.category === 'transfer') return def.capacity;
   if (def.recipe) {
     const need = def.recipe.inputs.find((i) => i.resource === res);
     if (need) return Math.max(8, need.amount * 4);
   }
   return 12;
+}
+
+// ── Effective node definition (blueprint + modules as modifiers) ─────────────
+
+const defCache = new WeakMap<GameNode, { key: string; def: NodeDef }>();
+
+export function defFor(state: GameState, node: GameNode): NodeDef {
+  const base = NODE_DEFS[node.type];
+  const bpId = node.blueprintId;
+  if (!bpId && node.modules.length === 0) return base;
+  const key = (bpId ?? '') + '|' + node.modules.join(',');
+  const cached = defCache.get(node);
+  if (cached && cached.key === key) return cached.def;
+
+  let def: NodeDef = base;
+  if (bpId) {
+    const bp = state.blueprints.find((b) => b.id === bpId);
+    if (bp) {
+      def = {
+        ...def,
+        capacity: Math.max(4, Math.round(def.capacity * bp.capacityMult)),
+        recipe: def.recipe ? {
+          inputs: def.recipe.inputs.map((i) => ({ resource: i.resource, amount: Math.max(1, Math.round(i.amount * bp.inputMult)) })),
+          outputs: def.recipe.outputs.map((o) => ({ resource: o.resource, amount: Math.max(1, Math.round(o.amount * bp.outputMult)) })),
+          time: Math.max(0.5, def.recipe.time * bp.timeMult),
+        } : def.recipe,
+      };
+    }
+  }
+  let capMult = 1; let red = 0; let extra = 0;
+  for (const mid of node.modules) {
+    const m = MODULE_DEFS.find((x) => x.id === mid);
+    if (!m) continue;
+    if (m.effect.capacityMult) capMult *= m.effect.capacityMult;
+    if (m.effect.inputReduction) red += m.effect.inputReduction;
+    if (m.effect.inputExtra) extra += m.effect.inputExtra;
+  }
+  if (capMult !== 1) def = { ...def, capacity: Math.max(4, Math.round(def.capacity * capMult)) };
+  if ((red > 0 || extra > 0) && def.recipe && def.recipe.inputs.length > 0) {
+    const inputs = def.recipe.inputs.map((io, i) => i === 0
+      ? { resource: io.resource, amount: Math.max(1, io.amount - red + extra) }
+      : io);
+    def = { ...def, recipe: { ...def.recipe, inputs } };
+  }
+  defCache.set(node, { key, def });
+  return def;
+}
+
+export function moduleSlots(node: GameNode): number {
+  const def = NODE_DEFS[node.type];
+  const base = def.tech || def.requireCore ? MODULE_CFG.advancedSlots : MODULE_CFG.baseSlots;
+  const byLevel = (node.level >= 3 ? 1 : 0) + (node.level >= 5 ? 1 : 0);
+  return Math.min(MODULE_CFG.maxSlots, base + byLevel);
+}
+
+export function moduleUsedSlots(node: GameNode): number {
+  let used = 0;
+  for (const mid of node.modules) {
+    const m = MODULE_DEFS.find((x) => x.id === mid);
+    used += m?.slotCost ?? 1;
+  }
+  return used;
 }
 
 export function defaultUpgrades(): Record<UpgradeId, number> {
@@ -255,6 +315,9 @@ export function newGame(keep?: { legacy: number; prestigeCount: number; life: Li
     researchTier: 0,
     achievements: keep?.achievements ?? [],
     boosts: {},
+    unlockedModules: [],
+    moduleChoice: null,
+    blueprints: [],
     nodes: [],
     connections: [],
     techs: [],
