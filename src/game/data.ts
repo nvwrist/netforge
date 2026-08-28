@@ -65,7 +65,7 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   storage: {
     id: 'storage', nameKey: 'nd.storage', descKey: 'nd.storage.d',
     category: 'storage', cost: { [D]: 60 }, costGrowth: 1.15,
-    inputs: [D], outputs: [D],
+    inputs: [D, D], outputs: [D],
     capacity: 120,
   },
   cache: {
@@ -524,7 +524,7 @@ const RU: Record<string, string> = {
   'resd.fragment': 'Ресурс прогресса. Заполняет тиры Ядра сети — каждый тир ускоряет производство.',
   'resd.credits': 'Сетевая валюта. Покупка продвинутых узлов, технологий и улучшений.',
   'nd.relay': 'РЕЛЕЙНЫЙ СЕРВЕР', 'nd.relay.d': 'Генерирует ДАННЫЕ. Основа любой сети.',
-  'nd.storage': 'ХРАНИЛИЩЕ ДАННЫХ', 'nd.storage.d': 'Копит ДАННЫЕ и переводит их в резерв (чем полнее — тем быстрее). DATA OUT раздаёт накопленное дальше.',
+  'nd.storage': 'ХРАНИЛИЩЕ ДАННЫХ', 'nd.storage.d': 'Копит ДАННЫЕ и переводит их в резерв (чем полнее — тем быстрее). Два входа DATA IN и DATA OUT, раздающий накопленное дальше.',
   'nd.cache': 'КЭШ ДАННЫХ', 'nd.cache.d': 'Компактный буфер между узлами: сглаживает поток ДАННЫХ.',
   'nd.compute': 'СЕРВЕР ВЫЧИСЛЕНИЙ', 'nd.compute.d': 'Генерирует ВЫЧИСЛЕНИЯ для процессоров.',
   'nd.router': 'МАРШРУТИЗАТОР', 'nd.router.d': 'Раздаёт ДАННЫЕ по двум направлениям.',
@@ -767,7 +767,7 @@ const EN: Record<string, string> = {
   'resd.fragment': 'Progress resource. Charges Network Core tiers — each tier speeds up production.',
   'resd.credits': 'Network currency. Buys advanced nodes, technologies and upgrades.',
   'nd.relay': 'RELAY SERVER', 'nd.relay.d': 'Generates DATA. The backbone of any network.',
-  'nd.storage': 'DATA STORAGE', 'nd.storage.d': 'Banks DATA and converts it to your reserve (fuller = faster). Its DATA OUT feeds the buffer onward.',
+  'nd.storage': 'DATA STORAGE', 'nd.storage.d': 'Banks DATA and converts it to your reserve (fuller = faster). Two DATA IN ports and a DATA OUT that feeds the buffer onward.',
   'nd.cache': 'DATA CACHE', 'nd.cache.d': 'A compact buffer between nodes: smooths the DATA flow.',
   'nd.compute': 'COMPUTE SERVER', 'nd.compute.d': 'Generates COMPUTE for processors.',
   'nd.router': 'ROUTER', 'nd.router.d': 'Splits DATA flow across two directions.',
