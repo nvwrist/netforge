@@ -191,7 +191,8 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
           const m = MODULE_DEFS.find((x) => x.id === mid);
           if (m?.effect.drainMult) drainMult *= m.effect.drainMult;
         }
-        const rate = TUNE.storageDrainMax * drainMult * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
+        const lvlDrain = 1 + TUNE.nodeDrainPerLevel * (node.level - 1);
+        const rate = TUNE.storageDrainMax * drainMult * lvlDrain * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
         const take = Math.min(fill, rate * dt);
         if (take > 0) {
           node.inv[res] = fill - take;

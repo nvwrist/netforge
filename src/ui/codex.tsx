@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  CATEGORY_ORDER, NODE_DEFS, RES_META, RES_ORDER, TECH_DEFS, tr,
+  CATEGORY_ORDER, NODE_DEFS, RES_META, RES_ORDER, TECH_DEFS, TUNE, tr,
 } from '../game/data';
 import type { Game } from '../game/Game';
 import { drawNodeIcon } from '../game/icons';
@@ -158,6 +158,14 @@ export function CodexModal({ game, snap }: { game: Game; snap: UISnapshot }) {
                       <div className="mt-2 pt-2 border-t border-[#1c2735] space-y-1.5">
                         <PortsRow def={def} lang={snap.lang} />
                         <RecipeRow def={def} lang={snap.lang} />
+                        <div className="text-[8.5px] text-[#5c6b7f] leading-snug">
+                          {tr(snap.lang, 'codex.lvl.' + def.category, {
+                            t: String(Math.round((1 - TUNE.nodeTimePerLevel) * 100)),
+                            q: String(Math.round(TUNE.nodeQtyPerLevel * 100)),
+                            c: String(Math.round(TUNE.nodeCapPerLevel * 100)),
+                            d: String(Math.round(TUNE.nodeDrainPerLevel * 100)),
+                          })}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -212,7 +220,7 @@ export function CodexModal({ game, snap }: { game: Game; snap: UISnapshot }) {
 
           {tab === 'faq' && (
             <div className="space-y-1.5 max-w-2xl">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => (
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((i) => (
                 <details key={i} className="panel bg-[#131a24] group" open={i <= 2}>
                   <summary className="cursor-pointer list-none px-3 py-2 flex items-center gap-2 select-none">
                     <span className="text-[#3fc1ff] font-display font-bold text-[11px] transition-transform group-open:rotate-90">▸</span>

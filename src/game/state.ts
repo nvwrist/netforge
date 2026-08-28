@@ -212,13 +212,17 @@ export function techById(id: TechId): TechDef | null {
 
 // Вместимость узла-хранилища: defFor учитывает модули и blueprint, апгрейд — глобальный масштаб.
 export function storageCapFor(state: GameState, node: GameNode): number {
-  return Math.round(defFor(state, node).capacity * (1 + TUNE.capPerLevel * state.upgrades.storageCap));
+  return Math.round(
+    defFor(state, node).capacity
+    * (1 + TUNE.capPerLevel * state.upgrades.storageCap)
+    * (1 + TUNE.nodeCapPerLevel * (node.level - 1)),
+  );
 }
 
 export function inputCapFor(state: GameState, node: GameNode, res: ResourceId): number {
   const def = defFor(state, node);
   if (def.category === 'storage') return storageCapFor(state, node);
-  if (def.category === 'transfer') return def.capacity;
+  if (def.category === 'transfer') return Math.round(def.capacity * (1 + TUNE.nodeCapPerLevel * (node.level - 1)));
   if (def.recipe) {
     const need = def.recipe.inputs.find((i) => i.resource === res);
     if (need) return Math.max(8, need.amount * 4);

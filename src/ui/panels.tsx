@@ -592,6 +592,29 @@ export function InfoPanel({ game }: { game: Game }) {
         </div>
       )}
 
+      {/* transparent upgrade preview: exactly what the next level changes */}
+      {!sel.maxed && (sel.nextTime !== null || sel.nextCap !== null) && (
+        <div className="mt-1.5 px-1.5 py-1 bg-[#1a1610]/60 border border-[#ffb02e]/20 text-[9.5px] leading-snug text-[#a9977a]">
+          <span className="font-bold text-[#ffb02e]">{L('info.lvl')} {sel.level + 1}: </span>
+          {sel.nextTime !== null && sel.recipe && (
+            <span>
+              {L('info.recipe').toLowerCase()} {sel.recipe.time.toFixed(1)}→<b className="text-[#d5e1ef]">{sel.nextTime.toFixed(1)}</b>{L('codex.sec')}
+            </span>
+          )}
+          {sel.nextQty !== null && sel.curQty !== null && (
+            <span>
+              {sel.nextTime !== null && ' · '}{L('info.output').toLowerCase()} {sel.curQty}→<b className="text-[#d5e1ef]">{sel.nextQty}</b>
+            </span>
+          )}
+          {sel.nextCap !== null && sel.bars.length > 0 && (
+            <span>
+              {sel.category === 'storage' ? L('info.cap').toLowerCase() : L('codex.buf').toLowerCase()} {fmt(sel.bars[0].cap)}→<b className="text-[#d5e1ef]">{fmt(sel.nextCap)}</b>
+              {sel.category === 'storage' && <span className="text-[#4fe3c1]"> · {L('info.drainPlus')}</span>}
+            </span>
+          )}
+        </div>
+      )}
+
       {sel.modules && (
         <div className="mt-2 pt-2 border-t border-[#223041]">
           <div className="flex items-center justify-between mb-1">

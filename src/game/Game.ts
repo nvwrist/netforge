@@ -2,7 +2,7 @@ import { AchievementManager } from './achievements';
 import { AudioManager } from './audio';
 import { Camera } from './camera';
 import {
-  LEGACY_CFG, MILESTONES, NODE_DEFS, RESEARCH_CFG, RES_META, SHOP_ORDER, TECH_DEFS, TUNE,
+  LEGACY_CFG, MILESTONES, NODE_DEFS, RESEARCH_CFG, RES_META, SHOP_ORDER, SURGE_CFG, TECH_DEFS, TUNE,
   TUTORIAL_STEPS, UPGRADE_DEFS, fmtRate, tierGoal, tr,
 } from './data';
 import { BLUEPRINT_CFG, MODULE_CFG, MODULE_DEFS, rollBlueprint } from './data/modules';
@@ -1166,8 +1166,33 @@ export class Game {
           afford: canPay(s.wallet, m.cost) && used + m.slotCost <= slots,
         }));
       const bp = node.blueprintId ? s.blueprints.find((b) => b.id === node.blueprintId) : null;
+      // what the NEXT level will change (transparent upgrade preview)
+      const notMax = node.level < TUNE.nodeMaxLevel;
+      let nextTime: number | null = null;
+      let nextQty: number | null = null;
+      let curQty: number | null = null;
+      let nextCap: number | null = null;
+      if (dEff.recipe && dEff.recipe.outputs.length > 0) {
+        const baseOut = dEff.recipe.outputs[0].amount;
+        curQty = Math.max(1, Math.round(baseOut * (1 + TUNE.nodeQtyPerLevel * (node.level - 1))));
+      }
+      if (notMax) {
+        if (dEff.recipe) {
+          let t0 = t;
+          if (node.surgeActive > 0) t0 *= SURGE_CFG.mult; // preview must ignore temporary surge
+          nextTime = t0 * TUNE.nodeTimePerLevel;
+          const baseOut = dEff.recipe.outputs[0]?.amount ?? 1;
+          nextQty = Math.max(1, Math.round(baseOut * (1 + TUNE.nodeQtyPerLevel * node.level)));
+        }
+        if (def.category === 'storage') {
+          nextCap = Math.round(dEff.capacity * (1 + TUNE.capPerLevel * s.upgrades.storageCap) * (1 + TUNE.nodeCapPerLevel * node.level));
+        } else if (def.category === 'transfer') {
+          nextCap = Math.round(dEff.capacity * (1 + TUNE.nodeCapPerLevel * node.level));
+        }
+      }
       selected = {
         id: node.id, type: node.type, nameKey: def.nameKey, level: node.level,
+        category: def.category, nextTime, nextQty, curQty, nextCap,
         statusKey: 'st.' + node.status,
         bars,
         recipe: dEff.recipe ? { inputs: dEff.recipe.inputs, outputs: dEff.recipe.outputs, time: t } : null,

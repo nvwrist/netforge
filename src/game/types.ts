@@ -232,6 +232,11 @@ export interface NodeModulesInfo {
 
 export interface SelectedInfo {
   id: string; type: NodeTypeId; nameKey: string; level: number;
+  category: NodeDef['category'];
+  nextTime: number | null;  // cycle time at next level (generators/processors)
+  nextQty: number | null;   // per-cycle output at next level
+  curQty: number | null;    // per-cycle output at current level
+  nextCap: number | null;   // capacity/buffer at next level (storage/transfer)
   statusKey: string;
   bars: { res: ResourceId; cur: number; cap: number }[];
   recipe: { inputs: RecipeIo[]; outputs: RecipeIo[]; time: number } | null;

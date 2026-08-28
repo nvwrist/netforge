@@ -399,7 +399,8 @@ export class Renderer {
     if (def.category === 'storage' && def.inputs[0] === 'data') {
       const cap = storageCapFor(v.state, node);
       const fill = node.inv.data ?? 0;
-      const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
+      const lvlDrain = 1 + TUNE.nodeDrainPerLevel * (node.level - 1);
+      const rate = TUNE.storageDrainMax * lvlDrain * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
       const py = y + h - 19;
       const pulse = 0.45 + 0.4 * Math.sin(v.time * 5);
       ctx.fillStyle = '#3fc1ff';
