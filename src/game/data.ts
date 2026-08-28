@@ -1,11 +1,13 @@
 import type {
-  Lang, NodeDef, NodeTypeId, ResourceId, TechDef, TechId, UpgradeDef, UpgradeId,
+  AchievementDef, Lang, NodeDef, NodeTypeId, ResourceId, TechDef, TechId, UpgradeDef, UpgradeId,
 } from './types';
+
+const D = 'data'; // key alias (kept short on purpose)
 
 // ── Resources ────────────────────────────────────────────────────────────────
 
 export const RES_META: Record<ResourceId, { color: string; nameKey: string }> = {
-  data:      { color: '#3fc1ff', nameKey: 'res.data' },
+  [D]:       { color: '#3fc1ff', nameKey: 'res.data' },
   compute:   { color: '#ffb02e', nameKey: 'res.compute' },
   processed: { color: '#4fe3c1', nameKey: 'res.processed' },
   filtered:  { color: '#8fb7ff', nameKey: 'res.filtered' },
@@ -14,17 +16,18 @@ export const RES_META: Record<ResourceId, { color: string; nameKey: string }> = 
   credits:   { color: '#ffd24a', nameKey: 'res.credits' },
 };
 
-export const RES_ORDER: ResourceId[] = ['data', 'compute', 'processed', 'filtered', 'encrypted', 'fragment', 'credits'];
+export const RES_ORDER: ResourceId[] = [D, 'compute', 'processed', 'filtered', 'encrypted', 'fragment', 'credits'];
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
 
 export const TUNE = {
-  travelTime: 1.15,        // seconds a packet travels a connection
-  baseRate: 2.0,           // connection items/sec at bandwidth level 0
+  travelTime: 1.15,
+  baseRate: 2.0,
   bwMultPerLevel: 1.5,
-  storageDrain: 0.5,       // storage → wallet conversion units/sec (slow, buffer stays visible)
-  capPerLevel: 0.5,        // +50% storage capacity per level
-  speedPerLevel: 0.88,     // generator / processor speed multiplier per level
+  storageDrainMax: 1.4,   // reserve conversion at 100% fill
+  storageDrainExp: 1.3,   // drain ∝ fill^exp  → fuller = faster
+  capPerLevel: 0.5,
+  speedPerLevel: 0.88,
   nodeTimePerLevel: 0.85,
   nodeQtyPerLevel: 0.25,
   nodeMaxLevel: 5,
@@ -33,81 +36,94 @@ export const TUNE = {
   autosaveSec: 5,
 };
 
+// ── Endless progression configs ──────────────────────────────────────────────
+
+export const SURGE_CFG = { intervalMin: 40, intervalMax: 90, window: 8, active: 15, mult: 3 };
+export const TIER_CFG = { base: 100, growth: 5, bonusPerTier: 0.10 };
+export const LEGACY_CFG = { divisor: 10, multPerPoint: 0.02, costScale: 1.2, startDataBonus: 0.25 };
+export const RESEARCH_CFG = { base: 100, growth: 2.2, bonusPerTier: 0.08 };
+export const TECH_LATE_MULT = 3;
+export const MILESTONES = [25, 50, 75];
+
+export function tierGoal(tier: number): number {
+  return Math.round(TIER_CFG.base * Math.pow(TIER_CFG.growth, tier));
+}
+
 // ── Node definitions (data-driven) ───────────────────────────────────────────
 
 export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   relay: {
     id: 'relay', nameKey: 'nd.relay', descKey: 'nd.relay.d',
-    category: 'generator', cost: { data: 20 }, costGrowth: 1.12,
-    inputs: [], outputs: ['data'],
-    recipe: { inputs: [], outputs: [{ resource: 'data', amount: 1 }], time: 1.8 },
+    category: 'generator', cost: { [D]: 20 }, costGrowth: 1.12,
+    inputs: [], outputs: [D],
+    recipe: { inputs: [], outputs: [{ resource: D, amount: 1 }], time: 1.8 },
     capacity: 20,
   },
   storage: {
     id: 'storage', nameKey: 'nd.storage', descKey: 'nd.storage.d',
-    category: 'storage', cost: { data: 50 }, costGrowth: 1.15,
-    inputs: ['data'], outputs: ['data'],
+    category: 'storage', cost: { [D]: 50 }, costGrowth: 1.15,
+    inputs: [D], outputs: [D],
     capacity: 120,
   },
   cache: {
     id: 'cache', nameKey: 'nd.cache', descKey: 'nd.cache.d',
-    category: 'transfer', cost: { data: 35 }, costGrowth: 1.15,
-    inputs: ['data'], outputs: ['data'],
+    category: 'transfer', cost: { [D]: 35 }, costGrowth: 1.15,
+    inputs: [D], outputs: [D],
     capacity: 40,
   },
   compute: {
     id: 'compute', nameKey: 'nd.compute', descKey: 'nd.compute.d',
-    category: 'generator', cost: { data: 100 }, costGrowth: 1.15,
+    category: 'generator', cost: { [D]: 100 }, costGrowth: 1.15,
     inputs: [], outputs: ['compute'],
     recipe: { inputs: [], outputs: [{ resource: 'compute', amount: 1 }], time: 3 },
     capacity: 15,
   },
   router: {
     id: 'router', nameKey: 'nd.router', descKey: 'nd.router.d',
-    category: 'transfer', cost: { data: 100 }, costGrowth: 1.18,
-    inputs: ['data', 'data'], outputs: ['data', 'data'],
+    category: 'transfer', cost: { [D]: 100 }, costGrowth: 1.18,
+    inputs: [D, D], outputs: [D, D],
     capacity: 12,
   },
   balancer: {
     id: 'balancer', nameKey: 'nd.balancer', descKey: 'nd.balancer.d',
-    category: 'transfer', cost: { data: 400 }, costGrowth: 1.22,
-    inputs: ['data', 'data'], outputs: ['data', 'data', 'data', 'data'],
+    category: 'transfer', cost: { [D]: 400 }, costGrowth: 1.22,
+    inputs: [D, D], outputs: [D, D, D, D],
     capacity: 60, tech: 'routing',
   },
   proxy: {
     id: 'proxy', nameKey: 'nd.proxy', descKey: 'nd.proxy.d',
-    category: 'processor', cost: { data: 250 }, costGrowth: 1.2,
-    inputs: ['data'], outputs: ['processed'],
-    recipe: { inputs: [{ resource: 'data', amount: 2 }], outputs: [{ resource: 'processed', amount: 1 }], time: 2.5 },
+    category: 'processor', cost: { [D]: 250 }, costGrowth: 1.2,
+    inputs: [D], outputs: ['processed'],
+    recipe: { inputs: [{ resource: D, amount: 2 }], outputs: [{ resource: 'processed', amount: 1 }], time: 2.5 },
     capacity: 10, tech: 'routing',
   },
   processor: {
     id: 'processor', nameKey: 'nd.processor', descKey: 'nd.processor.d',
-    category: 'processor', cost: { data: 350 }, costGrowth: 1.2,
-    inputs: ['data', 'compute'], outputs: [],
+    category: 'processor', cost: { [D]: 350 }, costGrowth: 1.2,
+    inputs: [D, 'compute'], outputs: [],
     recipe: {
-      inputs: [{ resource: 'data', amount: 2 }, { resource: 'compute', amount: 1 }],
+      inputs: [{ resource: D, amount: 2 }, { resource: 'compute', amount: 1 }],
       outputs: [{ resource: 'fragment', amount: 1 }], time: 4,
     },
     capacity: 10, tech: 'processing',
   },
   archive: {
     id: 'archive', nameKey: 'nd.archive', descKey: 'nd.archive.d',
-    category: 'processor', cost: { data: 300 }, costGrowth: 1.22,
-    inputs: ['data'], outputs: [],
-    recipe: { inputs: [{ resource: 'data', amount: 4 }], outputs: [{ resource: 'credits', amount: 2 }], time: 4 },
+    category: 'processor', cost: { [D]: 300 }, costGrowth: 1.22,
+    inputs: [D], outputs: [],
+    recipe: { inputs: [{ resource: D, amount: 4 }], outputs: [{ resource: 'credits', amount: 2 }], time: 4 },
     capacity: 12, tech: 'processing',
   },
   firewall: {
     id: 'firewall', nameKey: 'nd.firewall', descKey: 'nd.firewall.d',
-    category: 'processor', cost: { data: 600 }, costGrowth: 1.2,
-    inputs: ['data'], outputs: ['filtered'],
-    recipe: { inputs: [{ resource: 'data', amount: 3 }], outputs: [{ resource: 'filtered', amount: 2 }], time: 3 },
+    category: 'processor', cost: { [D]: 600 }, costGrowth: 1.2,
+    inputs: [D], outputs: ['filtered'],
+    recipe: { inputs: [{ resource: D, amount: 3 }], outputs: [{ resource: 'filtered', amount: 2 }], time: 3 },
     capacity: 10, tech: 'security',
   },
   encryption: {
     id: 'encryption', nameKey: 'nd.encryption', descKey: 'nd.encryption.d',
-    category: 'processor', cost: { data: 800 }, costGrowth: 1.25,
+    category: 'processor', cost: { [D]: 800 }, costGrowth: 1.25,
     inputs: ['filtered', 'compute'], outputs: ['encrypted'],
     recipe: {
       inputs: [{ resource: 'filtered', amount: 2 }, { resource: 'compute', amount: 1 }],
@@ -127,7 +143,7 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   },
   datacenter: {
     id: 'datacenter', nameKey: 'nd.datacenter', descKey: 'nd.datacenter.d',
-    category: 'processor', cost: { data: 1500 }, costGrowth: 1.3,
+    category: 'processor', cost: { [D]: 1500 }, costGrowth: 1.3,
     inputs: ['processed', 'encrypted', 'compute'], outputs: [],
     recipe: {
       inputs: [
@@ -141,16 +157,16 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
   hub: {
     id: 'hub', nameKey: 'nd.hub', descKey: 'nd.hub.d',
     category: 'transfer', cost: { credits: 80 }, costGrowth: 1.3,
-    inputs: ['data', 'data', 'data', 'data'],
-    outputs: ['data', 'data', 'data', 'data'],
+    inputs: [D, D, D, D],
+    outputs: [D, D, D, D],
     capacity: 24, tech: 'distributed',
   },
   core: {
     id: 'core', nameKey: 'nd.core', descKey: 'nd.core.d',
     category: 'processor', cost: { credits: 2500 }, costGrowth: 1.5,
-    inputs: ['data', 'compute'], outputs: [],
+    inputs: [D, 'compute'], outputs: [],
     recipe: {
-      inputs: [{ resource: 'data', amount: 5 }, { resource: 'compute', amount: 2 }],
+      inputs: [{ resource: D, amount: 5 }, { resource: 'compute', amount: 2 }],
       outputs: [{ resource: 'credits', amount: 8 }], time: 3,
     },
     capacity: 20, requireCore: true,
@@ -164,39 +180,63 @@ export const SHOP_ORDER: NodeTypeId[] = [
 
 export const CATEGORY_ORDER: NodeDef['category'][] = ['generator', 'storage', 'transfer', 'processor'];
 
-// ── Technologies ─────────────────────────────────────────────────────────────
+// ── Technologies (branched after routing) ────────────────────────────────────
 
 export const TECH_DEFS: TechDef[] = [
-  { id: 'routing',        nameKey: 'tc.routing',        descKey: 'tc.routing.d',        cost: { data: 150 },  unlocks: ['proxy', 'balancer'] },
-  { id: 'processing',     nameKey: 'tc.processing',     descKey: 'tc.processing.d',     cost: { data: 300 },  unlocks: ['processor', 'archive'] },
-  { id: 'security',       nameKey: 'tc.security',       descKey: 'tc.security.d',       cost: { data: 500 },  unlocks: ['firewall'] },
-  { id: 'encryptionTech', nameKey: 'tc.encryptionTech', descKey: 'tc.encryptionTech.d', cost: { data: 800 },  unlocks: ['encryption'] },
-  { id: 'distributed',    nameKey: 'tc.distributed',    descKey: 'tc.distributed.d',    cost: { data: 1200 }, unlocks: ['datacenter', 'hub', 'refinery'] },
+  { id: 'routing',        nameKey: 'tc.routing',        descKey: 'tc.routing.d',        cost: { [D]: 150 },  unlocks: ['proxy', 'balancer'] },
+  { id: 'processing',     nameKey: 'tc.processing',     descKey: 'tc.processing.d',     cost: { [D]: 300 },  unlocks: ['processor', 'archive'], requires: 'routing', path: 'A' },
+  { id: 'security',       nameKey: 'tc.security',       descKey: 'tc.security.d',       cost: { [D]: 500 },  unlocks: ['firewall'], requires: 'routing', path: 'B' },
+  { id: 'encryptionTech', nameKey: 'tc.encryptionTech', descKey: 'tc.encryptionTech.d', cost: { [D]: 800 },  unlocks: ['encryption'], requires: 'security', path: 'B' },
+  { id: 'distributed',    nameKey: 'tc.distributed',    descKey: 'tc.distributed.d',    cost: { [D]: 1200 }, unlocks: ['datacenter', 'hub', 'refinery'], requires: 'processing', path: 'A' },
 ];
 
-// ── Global upgrades ──────────────────────────────────────────────────────────
+// ── Global upgrades (endless) ────────────────────────────────────────────────
 
 export const UPGRADE_DEFS: UpgradeDef[] = [
   {
-    id: 'bandwidth', nameKey: 'up.bandwidth', descKey: 'up.bandwidth.d', max: 6,
-    cost: (l) => l < 3 ? { data: Math.round(150 * Math.pow(2.2, l)) } : { credits: Math.round(15 * Math.pow(2, l - 3)) },
+    id: 'bandwidth', nameKey: 'up.bandwidth', descKey: 'up.bandwidth.d', max: Infinity,
+    cost: (l) => l < 3 ? { [D]: Math.round(150 * Math.pow(2.2, l)) } : { credits: Math.round(15 * Math.pow(1.9, l - 3)) },
   },
   {
-    id: 'storageCap', nameKey: 'up.storageCap', descKey: 'up.storageCap.d', max: 5,
-    cost: (l) => ({ data: Math.round(200 * Math.pow(2.3, l)) }),
+    id: 'storageCap', nameKey: 'up.storageCap', descKey: 'up.storageCap.d', max: Infinity,
+    cost: (l) => ({ [D]: Math.round(200 * Math.pow(2.1, l)) }),
   },
   {
-    id: 'prodSpeed', nameKey: 'up.prodSpeed', descKey: 'up.prodSpeed.d', max: 5,
-    cost: (l) => ({ data: Math.round(250 * Math.pow(2.4, l)) }),
+    id: 'prodSpeed', nameKey: 'up.prodSpeed', descKey: 'up.prodSpeed.d', max: Infinity,
+    cost: (l) => ({ [D]: Math.round(250 * Math.pow(2.2, l)) }),
   },
   {
-    id: 'procSpeed', nameKey: 'up.procSpeed', descKey: 'up.procSpeed.d', max: 5,
-    cost: (l) => ({ data: Math.round(250 * Math.pow(2.4, l)) }),
+    id: 'procSpeed', nameKey: 'up.procSpeed', descKey: 'up.procSpeed.d', max: Infinity,
+    cost: (l) => ({ credits: Math.round(12 * Math.pow(1.9, l)) }),
   },
   {
-    id: 'packetSize', nameKey: 'up.packetSize', descKey: 'up.packetSize.d', max: 3,
-    cost: (l) => ({ credits: Math.round(15 * Math.pow(2, l)) }),
+    id: 'packetSize', nameKey: 'up.packetSize', descKey: 'up.packetSize.d', max: Infinity,
+    cost: (l) => ({ credits: Math.round(15 * Math.pow(2.1, l)) }),
   },
+];
+
+// ── Achievements ─────────────────────────────────────────────────────────────
+
+export const ACHIEVEMENTS: AchievementDef[] = [
+  { id: 'relay3',     nameKey: 'ach.relay3',     descKey: 'ach.relay3.d',     bonus: { kind: 'res', res: D, amount: 60 } },
+  { id: 'conn5',      nameKey: 'ach.conn5',      descKey: 'ach.conn5.d',      bonus: { kind: 'res', res: D, amount: 80 } },
+  { id: 'storage3',   nameKey: 'ach.storage3',   descKey: 'ach.storage3.d',   bonus: { kind: 'res', res: D, amount: 150 } },
+  { id: 'credits50',  nameKey: 'ach.credits50',  descKey: 'ach.credits50.d',  bonus: { kind: 'boost', target: 'proc', mult: 1.1, dur: 60 } },
+  { id: 'frag10',     nameKey: 'ach.frag10',     descKey: 'ach.frag10.d',     bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 60 } },
+  { id: 'chain4',     nameKey: 'ach.chain4',     descKey: 'ach.chain4.d',     bonus: { kind: 'boost', target: 'gen', mult: 1.1, dur: 60 } },
+  { id: 'relay8',     nameKey: 'ach.relay8',     descKey: 'ach.relay8.d',     bonus: { kind: 'boost', target: 'gen', mult: 1.15, dur: 60 } },
+  { id: 'nodes10',    nameKey: 'ach.nodes10',    descKey: 'ach.nodes10.d',    bonus: { kind: 'boost', target: 'all', mult: 1.05, dur: 90 } },
+  { id: 'conn15',     nameKey: 'ach.conn15',     descKey: 'ach.conn15.d',     bonus: { kind: 'boost', target: 'all', mult: 1.05, dur: 90 } },
+  { id: 'tech2',      nameKey: 'ach.tech2',      descKey: 'ach.tech2.d',      bonus: { kind: 'res', res: D, amount: 200 } },
+  { id: 'upg3',       nameKey: 'ach.upg3',       descKey: 'ach.upg3.d',       bonus: { kind: 'boost', target: 'proc', mult: 1.1, dur: 90 } },
+  { id: 'time5',      nameKey: 'ach.time5',      descKey: 'ach.time5.d',      bonus: { kind: 'boost', target: 'gen', mult: 1.1, dur: 120 } },
+  { id: 'credits500', nameKey: 'ach.credits500', descKey: 'ach.credits500.d', bonus: { kind: 'res', res: D, amount: 400 } },
+  { id: 'frag50',     nameKey: 'ach.frag50',     descKey: 'ach.frag50.d',     bonus: { kind: 'res', res: 'credits', amount: 20 } },
+  { id: 'chain6',     nameKey: 'ach.chain6',     descKey: 'ach.chain6.d',     bonus: { kind: 'res', res: 'credits', amount: 15 } },
+  { id: 'nodes25',    nameKey: 'ach.nodes25',    descKey: 'ach.nodes25.d',    bonus: { kind: 'res', res: 'credits', amount: 30 } },
+  { id: 'time20',     nameKey: 'ach.time20',     descKey: 'ach.time20.d',     bonus: { kind: 'res', res: 'credits', amount: 40 } },
+  { id: 'tier1',      nameKey: 'ach.tier1',      descKey: 'ach.tier1.d',      bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 120 } },
+  { id: 'prestige1',  nameKey: 'ach.prestige1',  descKey: 'ach.prestige1.d',  bonus: { kind: 'boost', target: 'all', mult: 1.15, dur: 120 } },
 ];
 
 // ── Tutorial ─────────────────────────────────────────────────────────────────
@@ -209,17 +249,20 @@ export const TUTORIAL_STEPS: { textKey: string }[] = [
   { textKey: 'tut.5' },
 ];
 
-export const GOAL_FRAGMENTS = 100;
-
 // ── Localization ─────────────────────────────────────────────────────────────
 
 const RU: Record<string, string> = {
   'hud.net': 'СЕТЬ', 'hud.online': 'В СЕТИ', 'hud.nodes': 'УЗЛЫ', 'hud.links': 'СВЯЗИ',
-  'hud.flow': 'ПОТОК', 'hud.pcs': '/с',
+  'hud.flow': 'ПОТОК', 'hud.pcs': '/с', 'hud.tier': 'ТИР', 'hud.legacy': 'LEGACY',
   'goal.title': 'ЯДРО СЕТИ', 'goal.done': 'ЯДРО ОНЛАЙН',
-  'shop.tabNodes': 'УЗЛЫ', 'shop.tabTech': 'ТЕХНОЛОГИИ', 'shop.tabUpg': 'УЛУЧШЕНИЯ',
+  'shop.tabNodes': 'УЗЛЫ', 'shop.tabTech': 'ТЕХНОЛОГИИ', 'shop.tabUpg': 'УЛУЧШЕНИЯ', 'shop.tabAch': 'ВЕХИ',
   'shop.locked': 'НУЖНА ТЕХНОЛОГИЯ', 'shop.lockedCore': 'НУЖНО ЯДРО СЕТИ',
   'shop.title': 'СЕТЕВЫЕ УЗЛЫ',
+  'shop.pathA': 'ПУТЬ ОБРАБОТКИ', 'shop.pathB': 'ПУТЬ БЕЗОПАСНОСТИ',
+  'shop.pathA.d': 'Фрагменты и кредиты: процессор, архив, дата-центр',
+  'shop.pathB.d': 'Фильтрация и шифрование: файрвол, ядро шифрования',
+  'shop.late': 'АЛЬТ. ПУТЬ · ЦЕНА ×3', 'shop.requires': 'ТРЕБУЕТ',
+  'research.name': 'ИССЛЕДОВАНИЕ СЕТИ', 'research.d': '+8% к скорости производства за тир. Бесконечно.',
   'info.upgrade': 'УЛУЧШИТЬ', 'info.delete': 'УДАЛИТЬ', 'info.lvl': 'УР.', 'info.max': 'МАКС',
   'info.recipe': 'Цикл', 'info.rate': 'Скорость',
   'st.online': 'АКТИВЕН', 'st.idle': 'ПРОСТОЙ', 'st.waiting': 'НЕТ ВХОДА', 'st.full': 'ПОЛНЫЙ',
@@ -234,8 +277,47 @@ const RU: Record<string, string> = {
   'off.time': 'Оффлайн', 'off.h': 'ч',
   'off.collect': 'ЗАБРАТЬ',
   'core.title': 'ЯДРО СЕТИ ОНЛАЙН',
-  'core.body': '100 фрагментов данных собраны. Ядро запущено — сеть выходит на новый уровень. Открыт узел «Ядро сети». Строительство продолжается.',
+  'core.body': 'Порог fragments пройден — ядро запущено и вышло на новый тир. Открыт узел «Ядро сети», производство ускорено.',
   'core.go': 'ПРОДОЛЖИТЬ',
+  'toast.mile': 'Ядро сети заряжено на {p}%',
+  'toast.tier': 'ЯДРО СЕТИ · ТИР {t}! Скорость производства +10%',
+  'toast.surge': 'Пойман всплеск данных: производство ×3 на 15 секунд!',
+  'toast.ach': 'ВЕХА: {name}',
+  'toast.prestige': 'Сеть пересобрана. Legacy +{n}',
+  'toast.research': 'Исследование завершено: тир {t}',
+  'surge.tag': 'ВСПЛЕСК!', 'surge.x': '×3',
+  'node.reserve': 'РЕЗЕРВ',
+  'tip.storage': 'Хранилище копит DATA и переводит их в общий резерв — резерв тратится на покупки. Чем полнее, тем быстрее.',
+  'prestige.title': 'NETWORK RESET',
+  'prestige.body': 'Сбросить узлы, связи, ресурсы и технологии. Взамен вы получите постоянные LEGACY POINTS (по накопленным кредитам забега) и +2% к скорости производства за каждое очко. Каждый следующий забег дороже, но и мощнее.',
+  'prestige.gain': 'ВЫ ПОЛУЧИТЕ', 'prestige.mult': 'Множитель скорости',
+  'prestige.confirm': 'ПЕРЕСОБРАТЬ СЕТЬ', 'prestige.cancel': 'ОТМЕНА',
+  'prestige.need': 'Доступно после запуска Ядра сети (тир 1)',
+  'lb.title': 'СЕТЕВАЯ МОЩЬ · ТОП ОПЕРАТОРОВ', 'lb.power': 'МОЩЬ', 'lb.tier': 'ТИР',
+  'lb.empty': 'Пока нет результатов — ваша сеть станет первой.', 'lb.you': 'ВЫ',
+  'ach.done': 'ВЫПОЛНЕНО', 'ach.reward': 'НАГРАДА', 'ach.progress': 'Вехи',
+  'ach.bonusRes': '+{n} {res}',
+  'ach.bonusBoost': '+{p}% {tgt} · {d}с',
+  'ach.tgt.gen': 'генерация', 'ach.tgt.proc': 'обработка', 'ach.tgt.all': 'всё производство',
+  'ach.relay3': 'Три реле', 'ach.relay3.d': 'Постройте 3 релейных сервера',
+  'ach.conn5': 'Первые связи', 'ach.conn5.d': 'Создайте 5 связей',
+  'ach.storage3': 'Складской район', 'ach.storage3.d': 'Постройте 3 хранилища',
+  'ach.credits50': 'Первая прибыль', 'ach.credits50.d': 'Заработайте 50 кредитов за забег',
+  'ach.frag10': 'Осколки', 'ach.frag10.d': 'Соберите 10 фрагментов данных',
+  'ach.chain4': 'Магистраль', 'ach.chain4.d': 'Цепочка из 4 узлов подряд',
+  'ach.relay8': 'Релейная ферма', 'ach.relay8.d': 'Постройте 8 релейных серверов',
+  'ach.nodes10': 'Десяток', 'ach.nodes10.d': '10 узлов в сети одновременно',
+  'ach.conn15': 'Коммутация', 'ach.conn15.d': 'Создайте 15 связей',
+  'ach.tech2': 'Исследователь', 'ach.tech2.d': 'Откройте 2 технологии',
+  'ach.upg3': 'Тюнинг', 'ach.upg3.d': 'Улучшите узлы 3 раза',
+  'ach.time5': 'Дежурная смена', 'ach.time5.d': '5 минут непрерывной работы сети',
+  'ach.credits500': 'Крупный контракт', 'ach.credits500.d': 'Заработайте 500 кредитов за забег',
+  'ach.frag50': 'Полпути', 'ach.frag50.d': 'Соберите 50 фрагментов данных',
+  'ach.chain6': 'Хребет сети', 'ach.chain6.d': 'Цепочка из 6 узлов подряд',
+  'ach.nodes25': 'Мегаполис', 'ach.nodes25.d': '25 узлов в сети одновременно',
+  'ach.time20': 'Ночная смена', 'ach.time20.d': '20 минут непрерывной работы',
+  'ach.tier1': 'Ядро живо', 'ach.tier1.d': 'Достигните тира 1 Ядра сети',
+  'ach.prestige1': 'Второе дыхание', 'ach.prestige1.d': 'Выполните Network Reset',
   'help.title': 'РУКОВОДСТВО ОПЕРАТОРА',
   'help.d1': 'ЛКМ — выбрать узел, тянуть — переместить',
   'help.d2': 'Тянуть с порта OUT на порт IN — создать связь',
@@ -265,15 +347,15 @@ const RU: Record<string, string> = {
   'res.data': 'ДАННЫЕ', 'res.compute': 'ВЫЧИСЛЕНИЯ', 'res.processed': 'ОБРАБОТАННЫЕ',
   'res.filtered': 'ОТФИЛЬТРОВАННЫЕ', 'res.encrypted': 'ЗАШИФРОВАННЫЕ',
   'res.fragment': 'ФРАГМЕНТЫ', 'res.credits': 'КРЕДИТЫ',
-  'resd.data': 'Сырьё сети. Производится реле, потребляется почти всеми узлами. Также это валюта покупок (верхняя панель).',
+  'resd.data': 'Сырьё сети. Производится реле, потребляется почти всеми узлами. Также валюта покупок (верхняя панель).',
   'resd.compute': 'Вычислительный ресурс серверов фермы. Нужен процессорам, шифрованию и дата-центру.',
   'resd.processed': 'Продукт прокси-серверов. Компонент для дата-центра и синтезатора.',
   'resd.filtered': 'Продукт файрволов. Нужен для шифрования и синтезатора.',
   'resd.encrypted': 'Продукт ядер шифрования. Компонент дата-центра.',
-  'resd.fragment': 'Ресурс прогресса. 100 фрагментов запускают Ядро сети.',
+  'resd.fragment': 'Ресурс прогресса. Заполняет тиры Ядра сети — каждый тир ускоряет производство.',
   'resd.credits': 'Сетевая валюта. Покупка продвинутых узлов, технологий и улучшений.',
   'nd.relay': 'РЕЛЕЙНЫЙ СЕРВЕР', 'nd.relay.d': 'Генерирует ДАННЫЕ. Основа любой сети.',
-  'nd.storage': 'ХРАНИЛИЩЕ ДАННЫХ', 'nd.storage.d': 'Буфер: накапливает ДАННЫЕ, медленно конвертирует их в резерв и может подавать дальше через DATA OUT.',
+  'nd.storage': 'ХРАНИЛИЩЕ ДАННЫХ', 'nd.storage.d': 'Копит ДАННЫЕ и переводит их в резерв (чем полнее — тем быстрее). DATA OUT раздаёт накопленное дальше.',
   'nd.cache': 'КЭШ ДАННЫХ', 'nd.cache.d': 'Компактный буфер между узлами: сглаживает поток ДАННЫХ.',
   'nd.compute': 'СЕРВЕР ВЫЧИСЛЕНИЙ', 'nd.compute.d': 'Генерирует ВЫЧИСЛЕНИЯ для процессоров.',
   'nd.router': 'МАРШРУТИЗАТОР', 'nd.router.d': 'Раздаёт ДАННЫЕ по двум направлениям.',
@@ -287,17 +369,16 @@ const RU: Record<string, string> = {
   'nd.datacenter': 'ДАТА-ЦЕНТР', 'nd.datacenter.d': 'Монетизирует поток: производит СЕТЕВЫЕ КРЕДИТЫ.',
   'nd.hub': 'СЕТЕВОЙ ХАБ', 'nd.hub.d': 'Многопортовый узел для крупных магистралей.',
   'nd.core': 'ЯДРО СЕТИ', 'nd.core.d': 'Сердце инфраструктуры: ДАННЫЕ + ВЫЧИСЛЕНИЯ в большой поток кредитов.',
-  'tc.routing': 'РАСШИР. МАРШРУТИЗАЦИЯ', 'tc.routing.d': 'Открывает Прокси-сервер и Балансировщик.',
-  'tc.processing': 'ОБРАБОТКА ДАННЫХ', 'tc.processing.d': 'Открывает Процессор данных и Архив.',
-  'tc.security': 'УРОВЕНЬ БЕЗОПАСНОСТИ', 'tc.security.d': 'Открывает Файрвол.',
-  'tc.encryptionTech': 'ШИФРОВАНИЕ', 'tc.encryptionTech.d': 'Открывает Ядро шифрования.',
-  'tc.distributed': 'РАСПРЕД. ВЫЧИСЛЕНИЯ', 'tc.distributed.d': 'Открывает Дата-центр, Хаб и Синтезатор.',
-  'up.bandwidth': 'ПРОПУСКНАЯ СПОСОБНОСТЬ', 'up.bandwidth.d': '+50% к пропускной способности всех связей.',
-  'up.storageCap': 'ОБЪЁМ ХРАНИЛИЩ', 'up.storageCap.d': '+50% к вместимости хранилищ данных.',
-  'up.prodSpeed': 'СКОРОСТЬ ГЕНЕРАЦИИ', 'up.prodSpeed.d': 'Генераторы работают на 12% быстрее.',
-  'up.procSpeed': 'СКОРОСТЬ ОБРАБОТКИ', 'up.procSpeed.d': 'Процессоры работают на 12% быстрее.',
-  'up.packetSize': 'РАЗМЕР ПАКЕТА', 'up.packetSize.d': 'Каждый пакет несёт +1 единицу ресурса.',
-  // start screen
+  'tc.routing': 'РАСШИР. МАРШРУТИЗАЦИЯ', 'tc.routing.d': 'Открывает Прокси-сервер и Балансировщик. База для выбора пути.',
+  'tc.processing': 'ОБРАБОТКА ДАННЫХ', 'tc.processing.d': 'Путь обработки: Процессор данных и Архив.',
+  'tc.security': 'УРОВЕНЬ БЕЗОПАСНОСТИ', 'tc.security.d': 'Путь безопасности: Файрвол.',
+  'tc.encryptionTech': 'ШИФРОВАНИЕ', 'tc.encryptionTech.d': 'Продолжение пути безопасности: Ядро шифрования.',
+  'tc.distributed': 'РАСПРЕД. ВЫЧИСЛЕНИЯ', 'tc.distributed.d': 'Вершина пути обработки: Дата-центр, Хаб и Синтезатор.',
+  'up.bandwidth': 'ПРОПУСКНАЯ СПОСОБНОСТЬ', 'up.bandwidth.d': '+50% к пропускной способности всех связей. Без предела.',
+  'up.storageCap': 'ОБЪЁМ ХРАНИЛИЩ', 'up.storageCap.d': '+50% к вместимости хранилищ данных. Без предела.',
+  'up.prodSpeed': 'СКОРОСТЬ ГЕНЕРАЦИИ', 'up.prodSpeed.d': 'Генераторы работают на 12% быстрее. Без предела.',
+  'up.procSpeed': 'СКОРОСТЬ ОБРАБОТКИ', 'up.procSpeed.d': 'Процессоры работают на 12% быстрее. Без предела.',
+  'up.packetSize': 'РАЗМЕР ПАКЕТА', 'up.packetSize.d': 'Каждый пакет несёт +1 единицу ресурса. Без предела.',
   'start.tag': 'ОПЕРАТОР ЭКСПЕРИМЕНТАЛЬНОЙ ЦИФРОВОЙ СЕТИ',
   'start.desc': 'Размещайте узлы, соединяйте порты — потоки данных сами разгонят сеть до полноценной цифровой инфраструктуры.',
   'start.play': 'ЗАПУСТИТЬ СЕТЬ',
@@ -306,7 +387,6 @@ const RU: Record<string, string> = {
   'start.tip': 'Автосейв каждые 5 секунд · оффлайн-прогресс до 8 часов',
   'start.chain': 'БАЗОВАЯ ЦЕПОЧКА',
   'start.controls': 'УПРАВЛЕНИЕ',
-  // codex
   'codex.title': 'СПРАВОЧНИК ОПЕРАТОРА',
   'codex.tabNodes': 'УЗЛЫ', 'codex.tabRes': 'РЕСУРСЫ', 'codex.tabLinks': 'СВЯЗИ', 'codex.tabFaq': 'FAQ',
   'codex.cat.generator': 'ГЕНЕРАТОРЫ', 'codex.cat.storage': 'ХРАНИЛИЩЕ',
@@ -320,38 +400,47 @@ const RU: Record<string, string> = {
   'cx.r3': 'Один порт = одна связь. Занятый порт подсвечен заполненным квадратом.',
   'cx.r4': 'Генераторы (реле, сервер вычислений) не имеют входов — они источники. Хранилище имеет и вход, и выход.',
   'cx.r5': 'ПКМ по линии или узлу — удаление. На мобильном — выделить узел и нажать «УДАЛИТЬ».',
-  'cx.bw': 'У каждой связи есть пропускная способность (по умолчанию 2 ед/с). Янтарная линия — связь перегружена. Улучшайте вкладку «ПРОПУСКНАЯ СПОСОБНОСТЬ».',
+  'cx.bw': 'У каждой связи есть пропускная способность (по умолчанию 2 ед/с). Янтарная линия — связь перегружена. Улучшайте «ПРОПУСКНУЮ СПОСОБНОСТЬ».',
   'codex.resTitle': 'ДВА СЛОЯ РЕСУРСОВ',
-  'codex.resBody': 'Цветные ресурсы текут по связям между узлами. DATA и CREDITS дополнительно живут в глобальном резерве (верхняя панель) — именно из резерва оплачиваются покупки. ФРАГМЕНТЫ — прогресс к Ядру сети.',
+  'codex.resBody': 'Цветные ресурсы текут по связям между узлами. DATA и CREDITS дополнительно живут в глобальном резерве (верхняя панель) — именно из резерва оплачиваются покупки. ФРАГМЕНТЫ заряжают тиры Ядра сети.',
   'faq.q1': 'С чего начать?',
-  'faq.a1': 'Реле производит ДАННЫЕ → хранилище накапливает и медленно переводит в резерв. Накопив ДАННЫЕ, купите маршрутизатор и сервер вычислений, затем процессор — он начнёт собирать ФРАГМЕНТЫ.',
-  'faq.q2': 'Почему хранилище показывало 0?',
-  'faq.a2': 'Хранилище конвертирует ДАННЫЕ в резерв (0,5/с). Если приток выше — буфер заполняется. Подключите его DATA OUT к потребителю (процессор, прокси, маршрутизатор), чтобы раздавать накопленное.',
+  'faq.a1': 'Реле производит ДАННЫЕ → хранилище копит их и переводит в резерв (это деньги на покупки). Накопив ДАННЫЕ, купите маршрутизатор и сервер вычислений, затем процессор — он собирает ФРАГМЕНТЫ.',
+  'faq.q2': 'Откуда берутся деньги на покупки?',
+  'faq.a2': 'Хранилище конвертирует накопленные ДАННЫЕ в общий резерв — тем быстрее, чем полнее буфер. Следите за индикатором «→ РЕЗЕРВ» на карточке хранилища и за стрелкой роста под счётчиком DATA.',
   'faq.q3': 'Как раздать данные нескольким узлам?',
   'faq.a3': 'Маршрутизатор: 1 вход → 2 выхода. Балансировщик: 2 входа → 4 выхода. Хранилище и кэш работают как промежуточные буферы с собственным выходом.',
   'faq.q4': 'Почему не создаётся связь?',
-  'faq.a4': 'Проверьте правила: только OUT → IN; цвета портов совпадают; оба порта свободны; нельзя соединить узел с собой. Красная вспышка у курсора — нарушение правила.',
+  'faq.a4': 'Только OUT → IN; цвета портов совпадают; оба порта свободны; нельзя соединить узел с собой. Причина пишется прямо у курсора.',
   'faq.q5': 'Где брать ФРАГМЕНТЫ?',
   'faq.a5': 'Процессор данных: 2 ДАННЫХ + 1 ВЫЧИСЛЕНИЕ → 1 ФРАГМЕНТ. Позже — синтезатор: обработанные + отфильтрованные данные → фрагмент.',
   'faq.q6': 'Как зарабатывать СЕТЕВЫЕ КРЕДИТЫ?',
-  'faq.a6': 'Архив (данные → кредиты), дата-центр (обработанные + зашифрованные + вычисления → кредиты) и Ядро сети после главной цели.',
+  'faq.a6': 'Архив (данные → кредиты), дата-центр (обработанные + зашифрованные + вычисления → кредиты) и узел «Ядро сети».',
   'faq.q7': 'Что значат статусы узлов?',
-  'faq.a7': 'АКТИВЕН — работает. НЕТ ВХОДА — ждёт ресурс на входе, проверьте связи. ПОЛНЫЙ — буфер заполнен, некому забирать: подключите OUT-порт. ПРОСТОЙ — нет данных для передачи.',
-  'faq.q8': 'Что делать после 100 фрагментов?',
-  'faq.a8': 'Запускается Ядро сети и открывается одноимённый узел — мощный генератор кредитов. Продолжайте расширять сеть, прокачивайте пропускную способность и уровни узлов.',
-  'faq.q9': 'Работает ли сеть без меня?',
-  'faq.a9': 'Да. При возвращении игра посчитает оффлайн-производство (до 8 часов, 50% эффективности) и предложит его забрать.',
-  'faq.q10': 'Как удалить узел или связь?',
-  'faq.a10': 'ПКМ по узлу или линии (на мобильном — выделить узел → «УДАЛИТЬ»). Связи узла удаляются вместе с ним. Стоимость не возвращается.',
+  'faq.a7': 'АКТИВЕН — работает. НЕТ ВХОДА — ждёт ресурс (значок разорванной цепи). ПОЛНЫЙ — некому забирать, подключите OUT-порт (значок переполнения). ПРОСТОЙ — нет данных.',
+  'faq.q8': 'Что такое ВСПЛЕСК ДАННЫХ?',
+  'faq.a8': 'Случайный генератор иногда подсвечивается янтарным на 8 секунд. Кликните по нему — 15 секунд он производит в 3 раза больше. Не успели — всплеск исчезает без штрафа.',
+  'faq.q9': 'Как работает Ядро сети и его тиры?',
+  'faq.a9': 'Фрагменты заполняют текущий тир ядра (100 → 500 → 2500 …). Каждый пройденный тир даёт +10% к скорости производства навсегда и усиливает визуал ядра. Предела тиров нет.',
+  'faq.q10': 'Что такое Network Reset и Legacy Points?',
+  'faq.a10': 'После тира 1 ядра доступен Network Reset: сеть обнуляется, но вы получаете постоянные Legacy Points (√кредитов забега ÷ 10) и +2% скорости за очко. Новые забеги дороже, но масштабнее.',
+  'faq.q11': 'Работает ли сеть без меня?',
+  'faq.a11': 'Да. При возвращении игра посчитает оффлайн-производство (до 8 часов, 50% эффективности) и предложит его забрать.',
+  'faq.q12': 'Как удалить узел или связь?',
+  'faq.a12': 'ПКМ по узлу или линии (на мобильном — выделить узел → «УДАЛИТЬ»). Связи узла удаляются вместе с ним. Стоимость не возвращается.',
 };
 
 const EN: Record<string, string> = {
   'hud.net': 'NETWORK', 'hud.online': 'ONLINE', 'hud.nodes': 'NODES', 'hud.links': 'LINKS',
-  'hud.flow': 'FLOW', 'hud.pcs': '/s',
+  'hud.flow': 'FLOW', 'hud.pcs': '/s', 'hud.tier': 'TIER', 'hud.legacy': 'LEGACY',
   'goal.title': 'NETWORK CORE', 'goal.done': 'CORE ONLINE',
-  'shop.tabNodes': 'NODES', 'shop.tabTech': 'TECH', 'shop.tabUpg': 'UPGRADES',
+  'shop.tabNodes': 'NODES', 'shop.tabTech': 'TECH', 'shop.tabUpg': 'UPGRADES', 'shop.tabAch': 'MILESTONES',
   'shop.locked': 'REQUIRES TECH', 'shop.lockedCore': 'REQUIRES NETWORK CORE',
   'shop.title': 'NETWORK NODES',
+  'shop.pathA': 'PROCESSING PATH', 'shop.pathB': 'SECURITY PATH',
+  'shop.pathA.d': 'Fragments & credits: processor, archive, data center',
+  'shop.pathB.d': 'Filtering & encryption: firewall, encryption core',
+  'shop.late': 'ALT PATH · COST ×3', 'shop.requires': 'REQUIRES',
+  'research.name': 'NETWORK RESEARCH', 'research.d': '+8% production speed per tier. Endless.',
   'info.upgrade': 'UPGRADE', 'info.delete': 'DELETE', 'info.lvl': 'LV.', 'info.max': 'MAX',
   'info.recipe': 'Cycle', 'info.rate': 'Rate',
   'st.online': 'ONLINE', 'st.idle': 'IDLE', 'st.waiting': 'NO INPUT', 'st.full': 'FULL',
@@ -366,8 +455,47 @@ const EN: Record<string, string> = {
   'off.time': 'Offline', 'off.h': 'h',
   'off.collect': 'COLLECT',
   'core.title': 'NETWORK CORE ONLINE',
-  'core.body': '100 data fragments assembled. The core is live — your network reaches a new tier. The Network Core node is now available. Keep building.',
+  'core.body': 'Fragment threshold cleared — the core reached a new tier. The Network Core node is available and production is faster.',
   'core.go': 'CONTINUE',
+  'toast.mile': 'Network core charged to {p}%',
+  'toast.tier': 'NETWORK CORE · TIER {t}! Production speed +10%',
+  'toast.surge': 'Data surge caught: ×3 production for 15 seconds!',
+  'toast.ach': 'MILESTONE: {name}',
+  'toast.prestige': 'Network rebuilt. Legacy +{n}',
+  'toast.research': 'Research complete: tier {t}',
+  'surge.tag': 'SURGE!', 'surge.x': '×3',
+  'node.reserve': 'RESERVE',
+  'tip.storage': 'Storage banks DATA and converts it to your reserve — the reserve pays for purchases. Fuller = faster.',
+  'prestige.title': 'NETWORK RESET',
+  'prestige.body': 'Wipe nodes, links, resources and techs. In return you gain permanent LEGACY POINTS (from run credits) and +2% production speed per point. Next runs cost more but scale bigger.',
+  'prestige.gain': 'YOU GAIN', 'prestige.mult': 'Speed multiplier',
+  'prestige.confirm': 'REBUILD NETWORK', 'prestige.cancel': 'CANCEL',
+  'prestige.need': 'Unlocks after Network Core tier 1',
+  'lb.title': 'NETWORK POWER · TOP OPERATORS', 'lb.power': 'POWER', 'lb.tier': 'TIER',
+  'lb.empty': 'No entries yet — your network will be the first.', 'lb.you': 'YOU',
+  'ach.done': 'DONE', 'ach.reward': 'REWARD', 'ach.progress': 'Milestones',
+  'ach.bonusRes': '+{n} {res}',
+  'ach.bonusBoost': '+{p}% {tgt} · {d}s',
+  'ach.tgt.gen': 'generation', 'ach.tgt.proc': 'processing', 'ach.tgt.all': 'all production',
+  'ach.relay3': 'Three relays', 'ach.relay3.d': 'Build 3 relay servers',
+  'ach.conn5': 'First links', 'ach.conn5.d': 'Create 5 connections',
+  'ach.storage3': 'Warehouse district', 'ach.storage3.d': 'Build 3 storages',
+  'ach.credits50': 'First profit', 'ach.credits50.d': 'Earn 50 credits in one run',
+  'ach.frag10': 'Shards', 'ach.frag10.d': 'Collect 10 data fragments',
+  'ach.chain4': 'Backbone', 'ach.chain4.d': 'A chain of 4 connected nodes',
+  'ach.relay8': 'Relay farm', 'ach.relay8.d': 'Build 8 relay servers',
+  'ach.nodes10': 'A dozen', 'ach.nodes10.d': '10 nodes online at once',
+  'ach.conn15': 'Switchboard', 'ach.conn15.d': 'Create 15 connections',
+  'ach.tech2': 'Researcher', 'ach.tech2.d': 'Unlock 2 technologies',
+  'ach.upg3': 'Tuning', 'ach.upg3.d': 'Upgrade nodes 3 times',
+  'ach.time5': 'Day shift', 'ach.time5.d': '5 minutes of continuous uptime',
+  'ach.credits500': 'Big contract', 'ach.credits500.d': 'Earn 500 credits in one run',
+  'ach.frag50': 'Halfway', 'ach.frag50.d': 'Collect 50 data fragments',
+  'ach.chain6': 'Network spine', 'ach.chain6.d': 'A chain of 6 connected nodes',
+  'ach.nodes25': 'Megalopolis', 'ach.nodes25.d': '25 nodes online at once',
+  'ach.time20': 'Night shift', 'ach.time20.d': '20 minutes of continuous uptime',
+  'ach.tier1': 'The core lives', 'ach.tier1.d': 'Reach Network Core tier 1',
+  'ach.prestige1': 'Second wind', 'ach.prestige1.d': 'Perform a Network Reset',
   'help.title': "OPERATOR'S GUIDE",
   'help.d1': 'LMB — select node, drag to move',
   'help.d2': 'Drag from an OUT port to an IN port — create a link',
@@ -402,10 +530,10 @@ const EN: Record<string, string> = {
   'resd.processed': 'Proxy server output. An ingredient for the data center and refinery.',
   'resd.filtered': 'Firewall output. Needed for encryption and the refinery.',
   'resd.encrypted': 'Encryption core output. A data center ingredient.',
-  'resd.fragment': 'Progress resource. 100 fragments bring the Network Core online.',
+  'resd.fragment': 'Progress resource. Charges Network Core tiers — each tier speeds up production.',
   'resd.credits': 'Network currency. Buys advanced nodes, technologies and upgrades.',
   'nd.relay': 'RELAY SERVER', 'nd.relay.d': 'Generates DATA. The backbone of any network.',
-  'nd.storage': 'DATA STORAGE', 'nd.storage.d': 'A buffer: accumulates DATA, slowly converts it to your reserve, and can feed it onward via DATA OUT.',
+  'nd.storage': 'DATA STORAGE', 'nd.storage.d': 'Banks DATA and converts it to your reserve (fuller = faster). Its DATA OUT feeds the buffer onward.',
   'nd.cache': 'DATA CACHE', 'nd.cache.d': 'A compact buffer between nodes: smooths the DATA flow.',
   'nd.compute': 'COMPUTE SERVER', 'nd.compute.d': 'Generates COMPUTE for processors.',
   'nd.router': 'ROUTER', 'nd.router.d': 'Splits DATA flow across two directions.',
@@ -419,17 +547,16 @@ const EN: Record<string, string> = {
   'nd.datacenter': 'DATA CENTER', 'nd.datacenter.d': 'Monetizes your flow: produces NETWORK CREDITS.',
   'nd.hub': 'NETWORK HUB', 'nd.hub.d': 'Multi-port node for large backbones.',
   'nd.core': 'NETWORK CORE', 'nd.core.d': 'Heart of the infrastructure: DATA + COMPUTE into a heavy credit stream.',
-  'tc.routing': 'ADVANCED ROUTING', 'tc.routing.d': 'Unlocks the Proxy Server and Load Balancer.',
-  'tc.processing': 'DATA PROCESSING', 'tc.processing.d': 'Unlocks the Data Processor and Archive Vault.',
-  'tc.security': 'SECURITY LAYER', 'tc.security.d': 'Unlocks the Firewall.',
-  'tc.encryptionTech': 'ENCRYPTION', 'tc.encryptionTech.d': 'Unlocks the Encryption Core.',
-  'tc.distributed': 'DISTRIBUTED COMPUTING', 'tc.distributed.d': 'Unlocks the Data Center, Hub and Refinery.',
-  'up.bandwidth': 'BANDWIDTH', 'up.bandwidth.d': '+50% throughput on all connections.',
-  'up.storageCap': 'STORAGE CAPACITY', 'up.storageCap.d': '+50% capacity on data storages.',
-  'up.prodSpeed': 'GENERATION SPEED', 'up.prodSpeed.d': 'Generators run 12% faster.',
-  'up.procSpeed': 'PROCESSING SPEED', 'up.procSpeed.d': 'Processors run 12% faster.',
-  'up.packetSize': 'PACKET SIZE', 'up.packetSize.d': 'Each packet carries +1 resource unit.',
-  // start screen
+  'tc.routing': 'ADVANCED ROUTING', 'tc.routing.d': 'Unlocks Proxy Server and Load Balancer. The base for your path choice.',
+  'tc.processing': 'DATA PROCESSING', 'tc.processing.d': 'Processing path: Data Processor and Archive Vault.',
+  'tc.security': 'SECURITY LAYER', 'tc.security.d': 'Security path: Firewall.',
+  'tc.encryptionTech': 'ENCRYPTION', 'tc.encryptionTech.d': 'Security path continues: Encryption Core.',
+  'tc.distributed': 'DISTRIBUTED COMPUTING', 'tc.distributed.d': 'Processing path apex: Data Center, Hub and Refinery.',
+  'up.bandwidth': 'BANDWIDTH', 'up.bandwidth.d': '+50% throughput on all connections. Endless.',
+  'up.storageCap': 'STORAGE CAPACITY', 'up.storageCap.d': '+50% capacity on data storages. Endless.',
+  'up.prodSpeed': 'GENERATION SPEED', 'up.prodSpeed.d': 'Generators run 12% faster. Endless.',
+  'up.procSpeed': 'PROCESSING SPEED', 'up.procSpeed.d': 'Processors run 12% faster. Endless.',
+  'up.packetSize': 'PACKET SIZE', 'up.packetSize.d': 'Each packet carries +1 resource unit. Endless.',
   'start.tag': 'OPERATOR OF AN EXPERIMENTAL DIGITAL NETWORK',
   'start.desc': 'Place nodes, connect ports — the data flows will grow your grid into full-scale digital infrastructure.',
   'start.play': 'BOOT THE NETWORK',
@@ -438,7 +565,6 @@ const EN: Record<string, string> = {
   'start.tip': 'Autosave every 5 seconds · offline progress up to 8 hours',
   'start.chain': 'BASIC CHAIN',
   'start.controls': 'CONTROLS',
-  // codex
   'codex.title': "OPERATOR'S CODEX",
   'codex.tabNodes': 'NODES', 'codex.tabRes': 'RESOURCES', 'codex.tabLinks': 'LINKS', 'codex.tabFaq': 'FAQ',
   'codex.cat.generator': 'GENERATORS', 'codex.cat.storage': 'STORAGE',
@@ -452,45 +578,56 @@ const EN: Record<string, string> = {
   'cx.r3': 'One port = one link. A filled square means the port is taken.',
   'cx.r4': 'Generators (relay, compute server) have no inputs — they are sources. Storage has both an input and an output.',
   'cx.r5': 'RMB on a line or node deletes it. On mobile — select the node and press DELETE.',
-  'cx.bw': 'Every link has bandwidth (2 units/s by default). An amber line means the link is saturated. Upgrade BANDWIDTH in the shop.',
+  'cx.bw': 'Every link has bandwidth (2 units/s by default). An amber line means saturation. Upgrade BANDWIDTH.',
   'codex.resTitle': 'TWO RESOURCE LAYERS',
-  'codex.resBody': 'Colored resources flow through links between nodes. DATA and CREDITS also live in your global reserve (top bar) — purchases are paid from the reserve. FRAGMENTS track progress toward the Network Core.',
+  'codex.resBody': 'Colored resources flow through links between nodes. DATA and CREDITS also live in your global reserve (top bar) — purchases are paid from the reserve. FRAGMENTS charge Network Core tiers.',
   'faq.q1': 'Where do I start?',
-  'faq.a1': 'The relay produces DATA → storage accumulates it and slowly converts it to your reserve. Save up DATA, buy a router and a compute server, then a processor — it will start assembling FRAGMENTS.',
-  'faq.q2': 'Why did storage always show 0?',
-  'faq.a2': 'Storage converts DATA into your reserve (0.5/s). When the inflow is higher, the buffer fills up. Connect its DATA OUT to a consumer (processor, proxy, router) to distribute what it holds.',
+  'faq.a1': 'The relay produces DATA → storage banks it and converts it to your reserve (that is your buying money). Save up DATA, buy a router and a compute server, then a processor — it assembles FRAGMENTS.',
+  'faq.q2': 'Where does purchase money come from?',
+  'faq.a2': 'Storage converts banked DATA into the global reserve — faster when fuller. Watch the “→ RESERVE” indicator on the storage card and the growth arrow under the DATA counter.',
   'faq.q3': 'How do I feed several nodes at once?',
   'faq.a3': 'Router: 1 input → 2 outputs. Load balancer: 2 inputs → 4 outputs. Storage and cache act as intermediate buffers with their own outputs.',
   'faq.q4': 'Why does my link fail?',
-  'faq.a4': 'Check the rules: OUT → IN only; port colors must match; both ports must be free; no self-links. A red flash at the cursor means a rule was broken.',
+  'faq.a4': 'OUT → IN only; port colors must match; both ports free; no self-links. The reason appears right at the cursor.',
   'faq.q5': 'Where do FRAGMENTS come from?',
   'faq.a5': 'Data Processor: 2 DATA + 1 COMPUTE → 1 FRAGMENT. Later — the Refinery: processed + filtered data → fragment.',
   'faq.q6': 'How do I earn NETWORK CREDITS?',
-  'faq.a6': 'Archive Vault (data → credits), Data Center (processed + encrypted + compute → credits), and the Network Core after the main goal.',
+  'faq.a6': 'Archive Vault (data → credits), Data Center (processed + encrypted + compute → credits), and the Network Core node.',
   'faq.q7': 'What do node statuses mean?',
-  'faq.a7': 'ONLINE — working. NO INPUT — waiting for resources, check its links. FULL — output buffer is full, nobody is taking the resource: connect the OUT port. IDLE — nothing to transfer.',
-  'faq.q8': 'What happens after 100 fragments?',
-  'faq.a8': 'The Network Core comes online and the node of the same name unlocks — a heavy credit generator. Keep expanding, upgrade bandwidth and node levels.',
-  'faq.q9': 'Does the network run while I am away?',
-  'faq.a9': 'Yes. On return, the game computes offline production (up to 8 hours at 50% efficiency) and offers a COLLECT window.',
-  'faq.q10': 'How do I delete a node or link?',
-  'faq.a10': 'RMB on the node or line (mobile: select the node → DELETE). A node’s links are removed with it. No refunds.',
+  'faq.a7': 'ONLINE — working. NO INPUT — waiting for resources (broken-chain icon). FULL — nobody takes the output, connect the OUT port (overflow icon). IDLE — nothing to transfer.',
+  'faq.q8': 'What is a DATA SURGE?',
+  'faq.a8': 'A random generator occasionally glows amber for 8 seconds. Click it — it produces ×3 for 15 seconds. Miss it and it vanishes, no penalty.',
+  'faq.q9': 'How do Network Core tiers work?',
+  'faq.a9': 'Fragments charge the current tier (100 → 500 → 2500 …). Each cleared tier grants a permanent +10% production speed and a bigger core visual. Tiers never end.',
+  'faq.q10': 'What are Network Reset and Legacy Points?',
+  'faq.a10': 'After core tier 1, Network Reset wipes the run but grants permanent Legacy Points (√run credits ÷ 10) and +2% speed each. New runs cost more but scale bigger.',
+  'faq.q11': 'Does the network run while I am away?',
+  'faq.a11': 'Yes. On return, the game computes offline production (up to 8 hours at 50% efficiency) and offers a COLLECT window.',
+  'faq.q12': 'How do I delete a node or link?',
+  'faq.a12': 'RMB on the node or line (mobile: select the node → DELETE). A node’s links are removed with it. No refunds.',
 };
 
 const DICTS: Record<Lang, Record<string, string>> = { ru: RU, en: EN };
 
-export function tr(lang: Lang, key: string): string {
-  return DICTS[lang][key] ?? DICTS.en[key] ?? key;
+export function tr(lang: Lang, key: string, vars?: Record<string, string>): string {
+  let s = DICTS[lang][key] ?? DICTS.en[key] ?? key;
+  if (vars) {
+    for (const k of Object.keys(vars)) s = s.split('{' + k + '}').join(vars[k]);
+  }
+  return s;
 }
 
 export function fmt(n: number): string {
   if (!isFinite(n)) return '0';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
   if (n >= 1e4) return (n / 1e3).toFixed(1) + 'K';
   return String(Math.floor(n));
 }
 
 export function fmtRate(n: number): string {
-  if (n >= 100) return fmt(n);
-  return (Math.round(n * 10) / 10).toString();
+  const a = Math.abs(n);
+  if (a >= 100) return fmt(n);
+  if (a >= 10) return (Math.round(n * 10) / 10).toString();
+  return (Math.round(n * 100) / 100).toString();
 }

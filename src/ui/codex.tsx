@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  CATEGORY_ORDER, GOAL_FRAGMENTS, NODE_DEFS, RES_META, RES_ORDER, TECH_DEFS, tr,
+  CATEGORY_ORDER, NODE_DEFS, RES_META, RES_ORDER, TECH_DEFS, tr,
 } from '../game/data';
 import type { Game } from '../game/Game';
 import { drawNodeIcon } from '../game/icons';
@@ -212,7 +212,7 @@ export function CodexModal({ game, snap }: { game: Game; snap: UISnapshot }) {
 
           {tab === 'faq' && (
             <div className="space-y-1.5 max-w-2xl">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => (
                 <details key={i} className="panel bg-[#131a24] group" open={i <= 2}>
                   <summary className="cursor-pointer list-none px-3 py-2 flex items-center gap-2 select-none">
                     <span className="text-[#3fc1ff] font-display font-bold text-[11px] transition-transform group-open:rotate-90">▸</span>
@@ -227,7 +227,7 @@ export function CodexModal({ game, snap }: { game: Game; snap: UISnapshot }) {
 
         <div className="px-4 py-2 border-t border-[#223041] flex items-center justify-between text-[9px] text-[#5c6b7f] tracking-wider">
           <span>{L('help.rule')}</span>
-          <span>{L('goal.title')}: {GOAL_FRAGMENTS} ◆</span>
+          <span>{L('goal.title')}: ∞ {L('hud.tier').toLowerCase()}</span>
         </div>
       </div>
     </div>
@@ -238,13 +238,13 @@ export function CodexModal({ game, snap }: { game: Game; snap: UISnapshot }) {
 
 export function StartScreen({ game, snap }: { game: Game; snap: UISnapshot }) {
   const L = (k: string) => tr(snap.lang, k);
-  const hasProgress = snap.nodeCount > 2 || snap.data > 60 || snap.fragments > 0 || snap.credits > 0;
+  const hasProgress = snap.nodeCount > 2 || snap.walletData > 60 || snap.fragments > 0 || snap.credits > 0 || snap.coreTier > 0;
 
   const chain: [string, string][] = [
     [L('nd.relay'), L('nd.storage')],
     [L('nd.storage'), L('nd.router') + ' → ' + L('nd.processor')],
     [L('nd.compute'), L('nd.processor')],
-    [L('nd.processor'), L('res.fragment') + ' ×' + GOAL_FRAGMENTS],
+    [L('nd.processor'), L('res.fragment') + ' → ' + L('goal.title')],
   ];
 
   return (

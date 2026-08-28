@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { GOAL_FRAGMENTS, tr } from '../game/data';
+import { fmt, tr } from '../game/data';
 import type { Game } from '../game/Game';
 import { ResIcon, useGameUI } from './panels';
 
@@ -19,10 +19,13 @@ export function Overlays({ game }: { game: Game }) {
                 ? 'bg-[#0f1f18]/95 border-[#45e08c]/50 text-[#45e08c]'
                 : t.kind === 'err'
                   ? 'bg-[#231015]/95 border-[#ff5d5d]/50 text-[#ff5d5d]'
-                  : 'bg-[#101823]/95 border-[#3fc1ff]/50 text-[#3fc1ff]'
+                  : t.kind === 'ach'
+                    ? 'bg-[#241d0c]/95 border-[#ffd24a]/60 text-[#ffd24a]'
+                    : 'bg-[#101823]/95 border-[#3fc1ff]/50 text-[#3fc1ff]'
             }`}
           >
-            {L(t.textKey)}
+            {t.kind === 'ach' && <span className="mr-1.5">★</span>}
+            {tr(s.lang, t.textKey, t.vars)}
           </div>
         ))}
       </div>
@@ -100,7 +103,7 @@ export function Overlays({ game }: { game: Game }) {
       {/* core online modal */}
       {s.showCoreModal && (
         <Modal accent="#45e08c">
-          <div className="text-[10px] font-bold tracking-[0.2em] text-[#ffd24a] mb-1">★ {GOAL_FRAGMENTS} / {GOAL_FRAGMENTS}</div>
+          <div className="text-[10px] font-bold tracking-[0.2em] text-[#ffd24a] mb-1">★ {L('hud.tier')} {s.coreTier} · +10% {L('info.rate').toLowerCase()}</div>
           <h2 className="font-display font-bold text-[24px] text-[#45e08c] m-0 leading-tight tracking-wide">{L('core.title')}</h2>
           <p className="text-[12px] text-[#a9bad0] leading-snug mt-2 mb-0">{L('core.body')}</p>
           <button
@@ -128,6 +131,71 @@ export function Overlays({ game }: { game: Game }) {
           <button
             onClick={() => game.setHelpOpen(false)}
             className="mt-4 w-full py-2 border border-[#3fc1ff]/50 text-[#3fc1ff] font-display font-bold text-[12px] tracking-[0.15em] hover:bg-[#3fc1ff]/10 transition-colors"
+          >
+            {L('help.close')}
+          </button>
+        </Modal>
+      )}
+
+      {/* prestige confirm */}
+      {s.prestigeOpen && (
+        <Modal accent="#c792ff">
+          <div className="text-[10px] font-bold tracking-[0.2em] text-[#c792ff] mb-1">◆ {L('hud.legacy')} · {fmt(s.legacy)}</div>
+          <h2 className="font-display font-bold text-[22px] text-[#d5e1ef] m-0 leading-tight tracking-wide">{L('prestige.title')}</h2>
+          <p className="text-[11px] text-[#a9bad0] leading-snug mt-2 mb-0">{L('prestige.body')}</p>
+          <div className="mt-3 p-2.5 border border-[#c792ff]/30 bg-[#1a1426]/60">
+            <div className="text-[9px] font-bold tracking-[0.18em] text-[#5c6b7f]">{L('prestige.gain')}</div>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="font-display font-bold text-[26px] text-[#c792ff] leading-none">+{fmt(s.prestigeGain)}</span>
+              <span className="text-[10px] text-[#a9bad0]">{L('hud.legacy')}</span>
+            </div>
+            <div className="text-[10px] text-[#7d8ca0] mt-1.5">
+              {L('prestige.mult')}: <b className="text-[#45e08c]">×{(1 + 0.02 * (s.legacy + s.prestigeGain)).toFixed(2)}</b>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => game.doPrestige()}
+              className="flex-1 py-2 border border-[#c792ff]/60 text-[#c792ff] font-display font-bold text-[12px] tracking-[0.12em] hover:bg-[#c792ff]/10 active:scale-[0.98] transition-all"
+            >
+              {L('prestige.confirm')}
+            </button>
+            <button
+              onClick={() => game.setPrestigeOpen(false)}
+              className="px-4 py-2 border border-[#33465e] text-[#7d8ca0] font-display font-bold text-[12px] tracking-[0.12em] hover:text-[#a9bad0] transition-colors"
+            >
+              {L('prestige.cancel')}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* leaderboard */}
+      {s.leaderboardOpen && (
+        <Modal accent="#ffd24a">
+          <div className="text-[10px] font-bold tracking-[0.2em] text-[#ffd24a] mb-1">★ {L('lb.power')}: {fmt(s.power)}</div>
+          <h2 className="font-display font-bold text-[17px] text-[#d5e1ef] m-0 leading-tight tracking-wide">{L('lb.title')}</h2>
+          <div className="mt-3 space-y-1">
+            {s.leaderboard.length === 0 && (
+              <p className="text-[11px] text-[#5c6b7f] m-0">{L('lb.empty')}</p>
+            )}
+            {s.leaderboard.map((e, i) => (
+              <div
+                key={e.name + i}
+                className={`flex items-center gap-2 px-2 py-1.5 border text-[11px] ${
+                  i === 0 ? 'border-[#ffd24a]/50 bg-[#241d0c]/50' : 'border-[#223041]'
+                }`}
+              >
+                <span className={`font-display font-bold w-6 ${i === 0 ? 'text-[#ffd24a]' : 'text-[#5c6b7f]'}`}>#{i + 1}</span>
+                <span className="flex-1 text-[#a9bad0] font-semibold">{e.name === 'OPERATOR' ? L('lb.you') : e.name}</span>
+                <span className="text-[#5c6b7f] text-[9px]">{L('lb.tier')} {e.tier}</span>
+                <b className="text-[#ffd24a]">{fmt(e.power)}</b>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => game.setLeaderboardOpen(false)}
+            className="mt-4 w-full py-2 border border-[#ffd24a]/50 text-[#ffd24a] font-display font-bold text-[12px] tracking-[0.15em] hover:bg-[#ffd24a]/10 transition-colors"
           >
             {L('help.close')}
           </button>

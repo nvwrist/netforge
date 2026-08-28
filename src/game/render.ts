@@ -1,9 +1,9 @@
 import type { Camera } from './camera';
-import { NODE_DEFS, RES_META, fmt, tr } from './data';
+import { NODE_DEFS, RES_META, TUNE, fmt, fmtRate, tr } from './data';
 import { drawNodeIcon } from './icons';
 import { NODE_W, inputCapFor, invResources, nodeH, portPos, storageCapacity } from './state';
 import type {
-  FloatText, GameNode, GameState, NodeTypeId, Particle,
+  FloatText, Flyer, GameNode, GameState, NodeTypeId, Particle,
 } from './types';
 
 export interface RenderView {
@@ -14,9 +14,12 @@ export interface RenderView {
   hoverPortId: string | null;
   hoverConnId: string | null;
   ghost: { type: NodeTypeId; x: number; y: number } | null;
-  dragConn: { fromPortId: string; x: number; y: number; targetPortId: string | null; valid: boolean } | null;
+  dragConn: { fromPortId: string; x: number; y: number; targetPortId: string | null; valid: boolean; reasonKey: string | null } | null;
   particles: Particle[];
   floats: FloatText[];
+  flyers: Flyer[];
+  hudTargets: Partial<Record<Flyer['res'], { x: number; y: number }>>;
+  tip: { x: number; y: number; alpha: number } | null;
   w: number;
   h: number;
   dpr: number;
@@ -63,6 +66,95 @@ export class Renderer {
     this.drawFloats(ctx, v);
 
     ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+    this.drawScreenOverlay(ctx, v);
+  }
+
+  // ── screen-space layer: reason labels, storage tip balloon, HUD flyers ─────
+  private drawScreenOverlay(ctx: CanvasRenderingContext2D, v: RenderView): void {
+    const cam = v.camera;
+
+    // drag rejection reason at cursor (contextual hint)
+    if (v.dragConn && v.dragConn.reasonKey) {
+      const p = cam.worldToScreen(v.dragConn.x, v.dragConn.y);
+      const text = tr(v.state.lang, v.dragConn.reasonKey);
+      ctx.font = '700 11px Rajdhani, sans-serif';
+      const w = ctx.measureText(text).width + 14;
+      const x = Math.min(v.w - w - 6, p.x + 16);
+      const y = Math.max(6, p.y - 30);
+      ctx.fillStyle = 'rgba(40,16,20,0.92)';
+      ctx.fillRect(x, y, w, 20);
+      ctx.strokeStyle = '#ff5d5d';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 19);
+      ctx.fillStyle = '#ff9d9d';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + 7, y + 10.5);
+    }
+
+    // one-time storage explanation balloon
+    if (v.tip) {
+      const p = cam.worldToScreen(v.tip.x, v.tip.y);
+      const text = tr(v.state.lang, 'tip.storage');
+      ctx.font = '500 11px "IBM Plex Mono", monospace';
+      const maxW = 230;
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let cur = '';
+      for (const wd of words) {
+        const t = cur ? cur + ' ' + wd : wd;
+        if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = wd; }
+        else cur = t;
+      }
+      if (cur) lines.push(cur);
+      const bw = Math.min(260, Math.max(...lines.map((l) => ctx.measureText(l).width)) + 20);
+      const bh = lines.length * 15 + 16;
+      const bx = Math.max(8, Math.min(v.w - bw - 8, p.x - bw / 2));
+      const by = Math.max(8, p.y - bh - 12);
+      ctx.globalAlpha = v.tip.alpha;
+      ctx.fillStyle = 'rgba(16,24,34,0.96)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#3fc1ff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+      // pointer
+      const px = Math.max(bx + 12, Math.min(bx + bw - 12, p.x));
+      ctx.beginPath();
+      ctx.moveTo(px - 6, by + bh);
+      ctx.lineTo(px, by + bh + 8);
+      ctx.lineTo(px + 6, by + bh);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(16,24,34,0.96)';
+      ctx.fill();
+      ctx.strokeStyle = '#3fc1ff';
+      ctx.beginPath();
+      ctx.moveTo(px - 6, by + bh); ctx.lineTo(px, by + bh + 8); ctx.lineTo(px + 6, by + bh);
+      ctx.stroke();
+      ctx.fillStyle = '#cfe4f7';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      lines.forEach((l, i) => ctx.fillText(l, bx + 10, by + 8 + i * 15));
+      ctx.globalAlpha = 1;
+    }
+
+    // resource flyers: node → HUD chip
+    for (const fl of v.flyers) {
+      const target = v.hudTargets[fl.res];
+      if (!target) continue;
+      const start = cam.worldToScreen(fl.wx, fl.wy);
+      const t = fl.t;
+      const e = t * t * (3 - 2 * t); // smoothstep
+      const x = start.x + (target.x - start.x) * e;
+      const y = start.y + (target.y - start.y) * e - Math.sin(t * Math.PI) * 26;
+      const color = RES_META[fl.res].color;
+      ctx.globalAlpha = 1 - t * t;
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 3.5, y - 3.5, 7, 7);
+      ctx.globalAlpha = (1 - t) * 0.35;
+      ctx.fillRect(x - 6, y - 6, 12, 12);
+      ctx.globalAlpha = 1;
+    }
+    ctx.textBaseline = 'alphabetic';
   }
 
   // ── grid ───────────────────────────────────────────────────────────────────
@@ -222,6 +314,33 @@ export class Renderer {
     ctx.fill();
     ctx.globalAlpha = 1;
 
+    // cause icon for problem statuses (P6: reason visible without codex)
+    if (node.status === 'waiting' || node.status === 'full') {
+      const ix = x + w - 64;
+      const iy = y + 13;
+      ctx.strokeStyle = sc;
+      ctx.lineWidth = 1.3;
+      if (node.status === 'waiting') {
+        // broken chain
+        ctx.beginPath();
+        ctx.arc(ix - 3.5, iy, 3, Math.PI * 0.25, Math.PI * 1.75);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ix + 4.5, iy, 3, Math.PI * 1.25, Math.PI * 0.75);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ix - 1.5, iy - 2.5); ctx.lineTo(ix + 1.5, iy + 2.5);
+        ctx.stroke();
+      } else {
+        // overflowing container
+        ctx.strokeRect(ix - 4, iy - 1, 8, 5);
+        ctx.beginPath();
+        ctx.moveTo(ix, iy - 6.5); ctx.lineTo(ix, iy - 3);
+        ctx.moveTo(ix - 2, iy - 5); ctx.lineTo(ix, iy - 7); ctx.lineTo(ix + 2, iy - 5);
+        ctx.stroke();
+      }
+    }
+
     // icon
     this.drawIcon(ctx, node.type, x + 24, y + 52);
 
@@ -268,6 +387,34 @@ export class Renderer {
       ctx.strokeRect(x + 10.5, py + 0.5, w - 21, 6);
     }
 
+    // storage → reserve live indicator (P1: visible cause & effect)
+    if (def.category === 'storage') {
+      const cap = storageCapacity(v.state);
+      const fill = node.inv.data ?? 0;
+      const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
+      const py = y + h - 19;
+      const pulse = 0.45 + 0.4 * Math.sin(v.time * 5);
+      ctx.fillStyle = '#3fc1ff';
+      for (let i = 0; i < 3; i++) {
+        ctx.globalAlpha = rate > 0.02 ? (0.25 + 0.6 * pulse) * (1 - i * 0.25) : 0.18;
+        const cx0 = x + 14 + i * 6;
+        ctx.beginPath();
+        ctx.moveTo(cx0 - 2, py - 3);
+        ctx.lineTo(cx0 + 1, py);
+        ctx.lineTo(cx0 - 2, py + 3);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.font = '600 8px "IBM Plex Mono", monospace';
+      ctx.fillStyle = rate > 0.02 ? '#7fd4ff' : '#5c6b7f';
+      ctx.textAlign = 'left';
+      ctx.fillText(`+${fmtRate(rate)}/s`, x + 34, py + 3);
+      ctx.fillStyle = '#5c6b7f';
+      ctx.textAlign = 'right';
+      ctx.fillText('→ ' + tr(v.state.lang, 'node.reserve'), x + w - 10, py + 3);
+      ctx.textAlign = 'left';
+    }
+
     // frame
     ctx.lineWidth = selected ? 1.5 : 1;
     ctx.strokeStyle = selected ? '#3fc1ff' : '#314052';
@@ -296,6 +443,65 @@ export class Renderer {
         ctx.lineTo(cx, cy + sy * L);
         ctx.stroke();
       }
+    }
+
+    // random surge: click window
+    if (node.surgeWindow > 0) {
+      const blink = 0.5 + 0.5 * Math.sin(v.time * 10);
+      ctx.strokeStyle = '#ffb02e';
+      ctx.globalAlpha = 0.3 + 0.5 * blink;
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(x - 3.5, y - 3.5, w + 7, h + 7);
+      ctx.globalAlpha = 1;
+      ctx.font = '700 11px Rajdhani, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#0f141a';
+      const tag = tr(v.state.lang, 'surge.tag') + ' ' + Math.ceil(node.surgeWindow) + 's';
+      const tw = ctx.measureText(tag).width + 12;
+      ctx.fillStyle = 'rgba(60,40,8,0.9)';
+      ctx.fillRect(x + w / 2 - tw / 2, y - 24, tw, 16);
+      ctx.strokeStyle = '#ffb02e';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + w / 2 - tw / 2 + 0.5, y - 23.5, tw - 1, 15);
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText(tag, x + w / 2, y - 12.5);
+      ctx.textAlign = 'left';
+    }
+    // surge active: x3 badge
+    if (node.surgeActive > 0) {
+      ctx.strokeStyle = '#ffb02e';
+      ctx.globalAlpha = 0.45 + 0.3 * Math.sin(v.time * 6);
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 2.5, y - 2.5, w + 5, h + 5);
+      ctx.globalAlpha = 1;
+      ctx.font = '700 10px Rajdhani, sans-serif';
+      ctx.fillStyle = '#ffb02e';
+      ctx.fillText(tr(v.state.lang, 'surge.x') + ' · ' + Math.ceil(node.surgeActive) + 's', x + 8, y - 8);
+    }
+
+    // network core tier rings (endless tier visual)
+    if (node.type === 'core') {
+      const rings = 1 + Math.min(4, v.state.coreTier);
+      const cx0 = x + w / 2;
+      const cy0 = y + h / 2;
+      ctx.strokeStyle = '#ffd24a';
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < rings; i++) {
+        const r0 = Math.max(w, h) / 2 + 10 + i * 7;
+        ctx.globalAlpha = Math.max(0.08, 0.3 - i * 0.045);
+        ctx.setLineDash([8, 10]);
+        ctx.lineDashOffset = v.time * (14 + i * 8) * (i % 2 ? -1 : 1);
+        ctx.beginPath();
+        ctx.arc(cx0, cy0, r0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.font = '700 9px Rajdhani, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText('T' + v.state.coreTier, cx0, y + h + 14);
+      ctx.textAlign = 'left';
     }
 
     // ports
@@ -348,7 +554,7 @@ export class Renderer {
     // port hints
     const tmp: GameNode = {
       id: 'ghost', type, x: gx, y: gy, level: 1, inv: {}, prod: 0,
-      status: 'idle', statusT: 0, flash: 0, flashColor: '#fff',
+      status: 'idle', statusT: 0, flash: 0, flashColor: '#fff', surgeWindow: 0, surgeActive: 0,
       ports: def.outputs.map((r, i) => ({ id: `g|out${i}`, nodeId: 'g', dir: 'out' as const, resource: r, connectionId: null })),
     };
     for (const port of tmp.ports) {

@@ -1,19 +1,23 @@
+import { AchievementManager } from './achievements';
 import { AudioManager } from './audio';
 import { Camera } from './camera';
 import {
-  GOAL_FRAGMENTS, NODE_DEFS, RES_META, SHOP_ORDER, TECH_DEFS, TUNE, TUTORIAL_STEPS, UPGRADE_DEFS,
+  LEGACY_CFG, MILESTONES, NODE_DEFS, RESEARCH_CFG, RES_META, SHOP_ORDER, TECH_DEFS, TUNE,
+  TUTORIAL_STEPS, UPGRADE_DEFS, fmtRate, tierGoal, tr,
 } from './data';
 import { effTime, updateConnections, updateProduction } from './engine';
 import { Renderer } from './render';
 import { applySave, estimateOffline, SaveManager } from './save';
+import { SurgeManager } from './surge';
 import {
   canPay, costOf, createConnection, findNode, inputCapFor, invResources, isUnlocked,
   makeNode, newGame, nodeH, nodeUpgradeCost, ownedCount, pay, portPos, removeConnection,
-  removeNode, storageCapacity, toEntries, validateConnection, NODE_W,
+  removeNode, storageCapacity, techAvailable, techCost, techIsLate, toEntries,
+  validateConnection, NODE_W,
 } from './state';
 import type {
-  FloatText, GameNode, GameState, NodeTypeId, Particle, Port, ResourceId, TechId, Toast,
-  UISnapshot, UpgradeId,
+  FloatText, Flyer, GameNode, GameState, NodeTypeId, OfflineGain, Particle, Port, ResourceId,
+  ScoreEntry, TechId, Toast, UISnapshot, UpgradeId,
 } from './types';
 import { YandexSDK } from '../sdk/YandexSDK';
 
@@ -29,6 +33,8 @@ export class Game {
   private renderer = new Renderer();
   private saveMgr = new SaveManager();
   private sdk = new YandexSDK();
+  private surgeMgr = new SurgeManager();
+  private achMgr = new AchievementManager();
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
 
@@ -55,9 +61,21 @@ export class Game {
   // presentation transient
   private particles: Particle[] = [];
   private floats: FloatText[] = [];
+  private flyers: Flyer[] = [];
+  private hudTargets: Partial<Record<Flyer['res'], { x: number; y: number }>> = {};
   private toasts: Toast[] = [];
   private toastSeq = 0;
   private flowRate = 0;
+  private reserveFlyAcc = 0;
+  private storageTipId: string | null = null;
+  private storageTipT = 0;
+  private tierMilestone = 0;
+
+  // wallet rate tracking
+  private rateTimer = 0;
+  private prevWallet = { data: 0, credits: 0 };
+  private dataRate = 0;
+  private creditsRate = 0;
 
   // ui sync
   private snapshot: UISnapshot;
@@ -71,7 +89,9 @@ export class Game {
   codexOpen = false;
   gridOn = true;
   started = false;
-  private offlinePending: { data: number; credits: number; hours: number } | null = null;
+  prestigeOpen = false;
+  leaderboardOpen = false;
+  private offlinePending: OfflineGain | null = null;
   private showCoreModal = false;
 
   private boundKeyDown = (e: KeyboardEvent) => this.onKeyDown(e);
@@ -98,6 +118,10 @@ export class Game {
     this.camera.x = this.state.camX;
     this.camera.y = this.state.camY;
     this.camera.zoom = this.state.camZoom;
+    this.prevWallet = { data: this.state.wallet.data, credits: this.state.wallet.credits };
+    // restore milestone bits so loaded games don't re-fire threshold toasts
+    const pct0 = (this.state.coreFragments / tierGoal(this.state.coreTier)) * 100;
+    this.tierMilestone = MILESTONES.reduce((m, mi, i) => (pct0 >= mi ? m | (1 << i) : m), 0);
 
     this.resize();
     this.bindInput();
@@ -140,28 +164,7 @@ export class Game {
     if (this.keys.has('d') || this.keys.has('arrowright')) this.camera.x += sp;
     this.camera.clamp();
 
-    // production (frozen until the operator boots the network from the start screen)
-    if (!this.started) return;
-    updateProduction(this.state, dt, {
-      onWallet: (res, amount, node) => {
-        const color = RES_META[res].color;
-        this.floats.push({
-          x: node.x + NODE_W / 2, y: node.y - 8,
-          text: '+' + amount + ' ' + (res === 'credits' ? 'CR' : 'DF'),
-          color, life: 1.3,
-        });
-        if (this.floats.length > 30) this.floats.shift();
-        if (res === 'fragment') this.audio.fragment();
-        this.spawnParticles(node.x + NODE_W / 2, node.y + 10, color, 5);
-      },
-      onCycleDone: () => undefined,
-    });
-
-    // connections + packets
-    const { delivered } = updateConnections(this.state, dt);
-    if (dt > 0) this.flowRate += (delivered / dt - this.flowRate) * Math.min(1, dt * 2);
-
-    // transient decay
+    // transient decay (always, so menus feel alive)
     for (const n of this.state.nodes) {
       if (n.flash > 0) n.flash = Math.max(0, n.flash - dt * 2.2);
     }
@@ -175,28 +178,106 @@ export class Game {
     this.particles = this.particles.filter((p) => p.life > 0);
     for (const f of this.floats) { f.life -= dt; f.y -= 26 * dt; }
     this.floats = this.floats.filter((f) => f.life > 0);
+    for (const fl of this.flyers) fl.t += dt / 0.55;
+    this.flyers = this.flyers.filter((fl) => fl.t < 1);
+    if (this.storageTipT > 0) this.storageTipT -= dt;
     const now = this.time;
     this.toasts = this.toasts.filter((t) => t.until > now);
 
-    // tutorial
-    this.checkTutorial();
+    // production (frozen until the operator boots the network from the start screen)
+    if (this.started) {
+      this.state.stats.life.time += dt;
+      updateProduction(this.state, dt, now, {
+        onWallet: (res, amount, node) => {
+          const color = RES_META[res].color;
+          this.floats.push({
+            x: node.x + NODE_W / 2, y: node.y - 8,
+            text: '+' + amount + ' ' + (res === 'credits' ? 'CR' : 'DF'),
+            color, life: 1.3,
+          });
+          if (this.floats.length > 30) this.floats.shift();
+          if (res === 'fragment') this.audio.fragment();
+          this.spawnParticles(node.x + NODE_W / 2, node.y + 10, color, 5);
+          this.spawnFlyer(node, res);
+        },
+        onCycleDone: () => undefined,
+        onReserve: (amount, node) => {
+          this.reserveFlyAcc += amount;
+          while (this.reserveFlyAcc >= 2.5) {
+            this.reserveFlyAcc -= 2.5;
+            this.spawnFlyer(node, 'data');
+          }
+        },
+      });
 
-    // main goal
-    if (!this.state.coreOnline && this.state.fragments >= GOAL_FRAGMENTS) {
-      this.state.coreOnline = true;
-      this.showCoreModal = true;
-      this.audio.goal();
-      this.toast('ok', 'toast.core');
-      this.spawnParticles(this.camera.x, this.camera.y, '#45e08c', 40);
-      this.spawnParticles(this.camera.x, this.camera.y, '#ffd24a', 30);
-      this.persist();
-    }
+      // connections + packets
+      const { delivered } = updateConnections(this.state, dt);
+      if (dt > 0) this.flowRate += (delivered / dt - this.flowRate) * Math.min(1, dt * 2);
 
-    // autosave
-    this.saveTimer += dt;
-    if (this.saveTimer >= TUNE.autosaveSec) {
-      this.saveTimer = 0;
-      this.persist();
+      // random surge events
+      this.surgeMgr.update(this.state, dt);
+
+      // achievements
+      this.achMgr.update(this.state, dt, now, {
+        unlock: (def) => {
+          this.audio.ach();
+          this.toast('ach', 'toast.ach', { name: tr(this.state.lang, def.nameKey) });
+        },
+        resBonus: (res, amount) => {
+          this.spawnFlyer(this.state.nodes[0] ?? null, res === 'credits' ? 'credits' : 'data');
+          void amount;
+        },
+      });
+
+      // core tier progression (endless)
+      let guard = 0;
+      while (this.state.coreFragments >= tierGoal(this.state.coreTier) && guard++ < 4) {
+        this.state.coreFragments -= tierGoal(this.state.coreTier);
+        this.state.coreTier++;
+        this.tierMilestone = 0;
+        if (this.state.coreTier === 1) {
+          this.showCoreModal = true;
+          this.audio.goal();
+          this.toast('ok', 'toast.core');
+        } else {
+          this.audio.tech();
+          this.toast('ok', 'toast.tier', { t: String(this.state.coreTier) });
+        }
+        this.spawnParticles(this.camera.x, this.camera.y, '#45e08c', 30);
+        this.spawnParticles(this.camera.x, this.camera.y, '#ffd24a', 24);
+        this.persist();
+      }
+
+      // milestone toasts inside the current tier
+      const goal = tierGoal(this.state.coreTier);
+      const pct = Math.floor((this.state.coreFragments / goal) * 100);
+      MILESTONES.forEach((m, i) => {
+        if (pct >= m && !(this.tierMilestone & (1 << i))) {
+          this.tierMilestone |= 1 << i;
+          this.toast('info', 'toast.mile', { p: String(m) });
+          this.audio.fragment();
+        }
+      });
+
+      // tutorial
+      this.checkTutorial();
+
+      // wallet rates (sampled)
+      this.rateTimer += dt;
+      if (this.rateTimer >= 0.25) {
+        const k = Math.min(1, this.rateTimer * 2);
+        this.dataRate += ((this.state.wallet.data - this.prevWallet.data) / this.rateTimer - this.dataRate) * k;
+        this.creditsRate += ((this.state.wallet.credits - this.prevWallet.credits) / this.rateTimer - this.creditsRate) * k;
+        this.prevWallet = { data: this.state.wallet.data, credits: this.state.wallet.credits };
+        this.rateTimer = 0;
+      }
+
+      // autosave
+      this.saveTimer += dt;
+      if (this.saveTimer >= TUNE.autosaveSec) {
+        this.saveTimer = 0;
+        this.persist();
+      }
     }
 
     // ui sync
@@ -209,14 +290,24 @@ export class Game {
 
   private render(): void {
     const s = this.state;
-    let dragConn: { fromPortId: string; x: number; y: number; targetPortId: string | null; valid: boolean } | null = null;
+    let dragConn: { fromPortId: string; x: number; y: number; targetPortId: string | null; valid: boolean; reasonKey: string | null } | null = null;
     if (this.drag?.kind === 'conn') {
       const target = this.portAt(this.drag.x, this.drag.y);
       let valid = false;
+      let reasonKey: string | null = null;
       if (target && target.port.dir === 'in') {
-        valid = validateConnection(s, this.drag.fromPortId, target.port.id).ok;
+        const v = validateConnection(s, this.drag.fromPortId, target.port.id);
+        valid = v.ok;
+        if (!v.ok) reasonKey = v.reason;
+      } else if (target) {
+        reasonKey = 'toast.errDir';
       }
-      dragConn = { fromPortId: this.drag.fromPortId, x: this.drag.x, y: this.drag.y, targetPortId: target?.port.id ?? null, valid };
+      dragConn = { fromPortId: this.drag.fromPortId, x: this.drag.x, y: this.drag.y, targetPortId: target?.port.id ?? null, valid, reasonKey };
+    }
+    let tip: { x: number; y: number; alpha: number } | null = null;
+    if (this.storageTipT > 0 && this.storageTipId) {
+      const n = findNode(s, this.storageTipId);
+      if (n) tip = { x: n.x + NODE_W / 2, y: n.y - 14, alpha: Math.min(1, this.storageTipT / 0.5) };
     }
     this.renderer.draw(this.ctx, {
       state: s, camera: this.camera, time: this.time,
@@ -227,6 +318,9 @@ export class Game {
       dragConn,
       particles: this.particles,
       floats: this.floats,
+      flyers: this.flyers,
+      hudTargets: this.hudTargets,
+      tip,
       w: this.w, h: this.h, dpr: this.dpr,
       gridOn: this.gridOn,
     });
@@ -277,6 +371,12 @@ export class Game {
 
     const node = this.nodeAt(world.x, world.y);
     if (node) {
+      // random surge catch
+      if (node.surgeWindow > 0 && this.surgeMgr.tryActivate(node)) {
+        this.audio.tech();
+        this.toast('ok', 'toast.surge');
+        this.spawnParticles(node.x + NODE_W / 2, node.y + 20, '#ffb02e', 16);
+      }
       this.selectedId = node.id;
       this.drag = { kind: 'node', id: node.id, dx: world.x - node.x, dy: world.y - node.y, moved: false };
     } else {
@@ -311,7 +411,6 @@ export class Game {
     }
 
     if (!this.drag) {
-      // hover feedback
       const p = this.portAt(world.x, world.y);
       this.hoverPortId = p?.port.id ?? null;
       this.hoverConnId = this.hoverPortId ? null : this.connectionAt(world.x, world.y);
@@ -344,7 +443,6 @@ export class Game {
     const world = this.camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     const drag = this.drag;
     if (this.pointers.size < 2 && this.pinchDist > 0 && this.pointers.size > 0) {
-      // remaining finger continues as pan anchor
       const rest = [...this.pointers.values()][0];
       this.drag = { kind: 'pan', lastX: rest.x, lastY: rest.y, midX: rest.x, midY: rest.y };
       this.pinchDist = 0;
@@ -373,12 +471,12 @@ export class Game {
           this.persist();
         } else {
           this.audio.error();
-          this.toast('err', v.reason);
-          this.spawnParticles(world.x, world.y, '#ff5d5d', 8);
+          target.node.flash = 1;
+          target.node.flashColor = '#ff5d5d';
         }
       }
-      this.bump();
     }
+    this.bump();
   };
 
   private onContextMenu = (e: MouseEvent): void => {
@@ -419,6 +517,8 @@ export class Game {
       else if (this.drag?.kind === 'conn') this.drag = null;
       else if (this.codexOpen) this.codexOpen = false;
       else if (this.helpOpen) this.helpOpen = false;
+      else if (this.prestigeOpen) this.prestigeOpen = false;
+      else if (this.leaderboardOpen) this.leaderboardOpen = false;
       else this.selectedId = null;
       this.bump();
       return;
@@ -518,7 +618,7 @@ export class Game {
   buyFromShop(type: NodeTypeId): void {
     const def = NODE_DEFS[type];
     if (!isUnlocked(this.state, def)) return;
-    const cost = costOf(def, ownedCount(this.state, type));
+    const cost = costOf(this.state, def, ownedCount(this.state, type));
     if (!canPay(this.state.wallet, cost)) {
       this.toast('err', 'toast.notEnough');
       this.audio.error();
@@ -528,7 +628,7 @@ export class Game {
     const c = this.camera.screenToWorld(this.w / 2, this.h / 2);
     this.ghostPos = { x: c.x - NODE_W / 2, y: c.y - nodeH(def) / 2 };
     this.selectedId = null;
-    this.audio.buy();
+    if (canPay(this.state.wallet, costOf(this.state, def, ownedCount(this.state, type) + 1))) this.audio.buy();
     if (window.innerWidth < 900) this.shopOpen = false;
     this.bump();
   }
@@ -537,7 +637,7 @@ export class Game {
     const type = this.ghostType;
     if (!type) return;
     const def = NODE_DEFS[type];
-    const cost = costOf(def, ownedCount(this.state, type));
+    const cost = costOf(this.state, def, ownedCount(this.state, type));
     if (!canPay(this.state.wallet, cost)) {
       this.toast('err', 'toast.notEnough');
       this.audio.error();
@@ -553,9 +653,16 @@ export class Game {
     node.flashColor = '#3fc1ff';
     this.selectedId = node.id;
     this.state.stats.placed++;
+    this.state.stats.life.nodes = this.state.stats.placed;
     this.audio.place();
     this.spawnParticles(x + NODE_W / 2, y + nodeH(def) / 2, '#3fc1ff', 12);
-    const stillAfford = canPay(this.state.wallet, costOf(def, ownedCount(this.state, type)));
+    // one-time contextual tip on first storage placement (P1)
+    if (type === 'storage' && !this.state.storageTipShown) {
+      this.state.storageTipShown = true;
+      this.storageTipId = node.id;
+      this.storageTipT = 6;
+    }
+    const stillAfford = canPay(this.state.wallet, costOf(this.state, def, ownedCount(this.state, type)));
     if (!stillAfford) this.ghostType = null;
     this.persist();
     this.bump();
@@ -591,6 +698,7 @@ export class Game {
     }
     pay(this.state.wallet, partial);
     node.level++;
+    this.state.stats.life.upgrades++;
     node.flash = 1;
     node.flashColor = '#ffb02e';
     this.audio.upgrade();
@@ -603,15 +711,34 @@ export class Game {
   unlockTech(id: TechId): void {
     const def = TECH_DEFS.find((t) => t.id === id);
     if (!def || this.state.techs.includes(id)) return;
-    if (!canPay(this.state.wallet, def.cost)) {
+    if (!techAvailable(this.state, def)) return;
+    const cost = techCost(this.state, def);
+    if (!canPay(this.state.wallet, cost)) {
       this.toast('err', 'toast.notEnough');
       this.audio.error();
       return;
     }
-    pay(this.state.wallet, def.cost);
+    pay(this.state.wallet, cost);
     this.state.techs.push(id);
     this.audio.tech();
     this.toast('ok', 'toast.tech');
+    this.persist();
+    this.bump();
+  }
+
+  buyResearch(): void {
+    const cost: Partial<Record<ResourceId, number>> = {
+      credits: Math.round(RESEARCH_CFG.base * Math.pow(RESEARCH_CFG.growth, this.state.researchTier)),
+    };
+    if (!canPay(this.state.wallet, cost)) {
+      this.toast('err', 'toast.notEnough');
+      this.audio.error();
+      return;
+    }
+    pay(this.state.wallet, cost);
+    this.state.researchTier++;
+    this.audio.tech();
+    this.toast('ok', 'toast.research', { t: String(this.state.researchTier) });
     this.persist();
     this.bump();
   }
@@ -635,6 +762,48 @@ export class Game {
     this.bump();
   }
 
+  // ── prestige (endless second loop) ─────────────────────────────────────────
+
+  prestigeGainPreview(): number {
+    return Math.floor(Math.sqrt(Math.max(0, this.state.stats.runCredits)) / LEGACY_CFG.divisor);
+  }
+
+  doPrestige(): void {
+    const gain = this.prestigeGainPreview();
+    const legacy = this.state.legacy + gain;
+    const keep = {
+      legacy,
+      prestigeCount: this.state.prestigeCount + 1,
+      life: { ...this.state.stats.life },
+      achievements: [...this.state.achievements],
+      lang: this.state.lang,
+      muted: this.state.muted,
+    };
+    this.state = newGame(keep);
+    this.selectedId = null;
+    this.ghostType = null;
+    this.prestigeOpen = false;
+    this.showCoreModal = false;
+    this.flowRate = 0;
+    this.tierMilestone = 0;
+    this.dataRate = 0;
+    this.creditsRate = 0;
+    this.prevWallet = { data: this.state.wallet.data, credits: 0 };
+    this.particles = [];
+    this.floats = [];
+    this.flyers = [];
+    this.surgeMgr.reset();
+    this.camera.x = this.state.camX;
+    this.camera.y = this.state.camY;
+    this.camera.zoom = this.state.camZoom;
+    this.audio.goal();
+    this.toast('ok', 'toast.prestige', { n: String(gain) });
+    this.persist();
+    this.bump();
+  }
+
+  // ── misc ui actions ────────────────────────────────────────────────────────
+
   collectOffline(): void {
     if (!this.offlinePending) return;
     this.state.wallet.data += this.offlinePending.data;
@@ -652,9 +821,12 @@ export class Game {
     this.ghostType = null;
     this.offlinePending = null;
     this.showCoreModal = false;
+    this.prestigeOpen = false;
     this.flowRate = 0;
+    this.tierMilestone = 0;
     this.particles = [];
     this.floats = [];
+    this.flyers = [];
     this.camera.x = this.state.camX;
     this.camera.y = this.state.camY;
     this.camera.zoom = this.state.camZoom;
@@ -679,6 +851,8 @@ export class Game {
   setShopOpen(open: boolean): void { this.shopOpen = open; this.bump(); }
   setHelpOpen(open: boolean): void { this.helpOpen = open; this.bump(); }
   setCodexOpen(open: boolean): void { this.codexOpen = open; this.bump(); }
+  setPrestigeOpen(open: boolean): void { this.prestigeOpen = open; this.bump(); }
+  setLeaderboardOpen(open: boolean): void { this.leaderboardOpen = open; this.bump(); }
   closeCoreModal(): void { this.showCoreModal = false; this.bump(); }
 
   startGame(): void {
@@ -701,6 +875,10 @@ export class Game {
     this.camera.zoom = 1;
     this.camera.clamp();
     this.bump();
+  }
+
+  setHudTargets(t: Partial<Record<Flyer['res'], { x: number; y: number }>>): void {
+    this.hudTargets = t;
   }
 
   skipTutorial(): void {
@@ -740,8 +918,24 @@ export class Game {
     this.state.camZoom = this.camera.zoom;
     if (this.saveMgr.save(this.state)) {
       this.saveTick++;
+      const entry: ScoreEntry = {
+        name: 'OPERATOR',
+        power: this.networkPower(),
+        tier: this.state.coreTier,
+        ts: Date.now(),
+      };
+      this.saveMgr.submitScore(entry);
       void this.sdk.saveGame('netforge');
     }
+  }
+
+  networkPower(): number {
+    const s = this.state;
+    return Math.floor(s.stats.life.fragments + s.coreTier * 100 + s.legacy * 25 + s.stats.life.credits / 10);
+  }
+
+  getLeaderboard(): ScoreEntry[] {
+    return this.saveMgr.loadScores();
   }
 
   // ── fx helpers ─────────────────────────────────────────────────────────────
@@ -759,8 +953,14 @@ export class Game {
     }
   }
 
-  private toast(kind: Toast['kind'], textKey: string): void {
-    this.toasts.push({ id: this.toastSeq++, kind, textKey, until: this.time + 2.6 });
+  private spawnFlyer(node: GameNode | null, res: Flyer['res']): void {
+    if (!node || !this.hudTargets[res]) return;
+    if (this.flyers.length > 24) return;
+    this.flyers.push({ wx: node.x + NODE_W / 2, wy: node.y + 16, res, t: 0 });
+  }
+
+  private toast(kind: Toast['kind'], textKey: string, vars?: Record<string, string>): void {
+    this.toasts.push({ id: this.toastSeq++, kind, textKey, vars, until: this.time + 2.8 });
     if (this.toasts.length > 4) this.toasts.shift();
     this.bump();
   }
@@ -781,24 +981,33 @@ export class Game {
 
   private buildSnapshot(): UISnapshot {
     const s = this.state;
+    const now = this.time;
     const shop = SHOP_ORDER.map((id) => {
       const def = NODE_DEFS[id];
-      const cost = costOf(def, ownedCount(s, id));
+      const cost = costOf(s, def, ownedCount(s, id));
       return {
         id, nameKey: def.nameKey, descKey: def.descKey,
         cost: toEntries(cost),
         afford: canPay(s.wallet, cost),
         unlocked: isUnlocked(s, def),
         owned: ownedCount(s, id),
+        requireCore: !!def.requireCore,
       };
     });
-    const techs = TECH_DEFS.map((t) => ({
-      id: t.id, nameKey: t.nameKey, descKey: t.descKey,
-      cost: toEntries(t.cost),
-      afford: canPay(s.wallet, t.cost),
-      unlocked: s.techs.includes(t.id),
-      unlocksKeys: t.unlocks.map((u) => NODE_DEFS[u].nameKey),
-    }));
+    const techs = TECH_DEFS.map((t) => {
+      const cost = techCost(s, t);
+      return {
+        id: t.id, nameKey: t.nameKey, descKey: t.descKey,
+        cost: toEntries(cost),
+        afford: canPay(s.wallet, cost),
+        unlocked: s.techs.includes(t.id),
+        available: techAvailable(s, t),
+        late: techIsLate(s, t),
+        path: t.path ?? null,
+        requiresKey: t.requires ? TECH_DEFS.find((x) => x.id === t.requires)?.nameKey ?? null : null,
+        unlocksKeys: t.unlocks.map((u) => NODE_DEFS[u].nameKey),
+      };
+    });
     const upgrades = UPGRADE_DEFS.map((u) => {
       const level = s.upgrades[u.id];
       const maxed = level >= u.max;
@@ -808,6 +1017,8 @@ export class Game {
         level, max: u.max, cost: toEntries(cost), afford: !maxed && canPay(s.wallet, cost),
       };
     });
+    const lang = s.lang;
+    const achievements = (await_achievementsSnapshot(s, lang));
 
     let selected: UISnapshot['selected'] = null;
     const node = this.selectedId ? findNode(s, this.selectedId) : null;
@@ -818,7 +1029,7 @@ export class Game {
         cur: node.inv[res] ?? 0,
         cap: def.category === 'storage' ? storageCapacity(s) : inputCapFor(s, node, res),
       }));
-      const t = effTime(s, node);
+      const t = effTime(s, node, now);
       const uc = nodeUpgradeCost(node);
       selected = {
         id: node.id, type: node.type, nameKey: def.nameKey, level: node.level,
@@ -831,22 +1042,34 @@ export class Game {
         upgradeCost: uc,
         canUpgrade: node.level < TUNE.nodeMaxLevel && canPay(s.wallet, { [uc.res]: uc.amount }),
         maxed: node.level >= TUNE.nodeMaxLevel,
+        surge: node.surgeActive,
       };
     }
 
     return {
       v: (this.snapshot?.v ?? 0) + 1,
-      lang: s.lang, muted: s.muted,
+      lang, muted: s.muted,
       started: this.started,
       gridOn: this.gridOn,
       codexOpen: this.codexOpen,
-      data: s.wallet.data, credits: s.wallet.credits, fragments: s.fragments,
-      coreOnline: s.coreOnline, showCoreModal: this.showCoreModal,
+      walletData: s.wallet.data, credits: s.wallet.credits, fragments: s.fragments,
+      dataRate: this.dataRate, creditsRate: this.creditsRate,
+      coreOnline: s.coreTier >= 1, showCoreModal: this.showCoreModal,
+      coreTier: s.coreTier, coreGoal: tierGoal(s.coreTier), coreFragments: s.coreFragments,
+      legacy: s.legacy, prestigeCount: s.prestigeCount,
+      prestigeGain: this.prestigeGainPreview(), prestigeReady: s.coreTier >= 1,
+      prestigeOpen: this.prestigeOpen, leaderboardOpen: this.leaderboardOpen,
+      leaderboard: this.getLeaderboard(), power: this.networkPower(),
+      researchTier: s.researchTier,
+      researchCost: toEntries({ credits: Math.round(RESEARCH_CFG.base * Math.pow(RESEARCH_CFG.growth, s.researchTier)) }),
+      researchAfford: s.wallet.credits >= RESEARCH_CFG.base * Math.pow(RESEARCH_CFG.growth, s.researchTier),
       nodeCount: s.nodes.length, connCount: s.connections.length,
       flowRate: this.flowRate,
       selected,
       placement: this.ghostType,
       shop, techs, upgrades,
+      achievements,
+      achDone: s.achievements.length, achTotal: achievements.length,
       tutorial: s.tutorialStep >= 0 && s.tutorialStep < TUTORIAL_STEPS.length
         ? { index: s.tutorialStep, total: TUTORIAL_STEPS.length, textKey: TUTORIAL_STEPS[s.tutorialStep].textKey }
         : null,
@@ -870,4 +1093,27 @@ export class Game {
   }
 }
 
-
+// Achievements list for the UI tab (pure mapping, no gameplay state).
+import { ACHIEVEMENTS } from './data';
+function await_achievementsSnapshot(s: GameState, lang: GameState['lang']): UISnapshot['achievements'] {
+  return ACHIEVEMENTS.map((def) => {
+    let bonusText = '';
+    if (def.bonus.kind === 'res') {
+      bonusText = tr(lang, 'ach.bonusRes', {
+        n: String(def.bonus.amount),
+        res: tr(lang, RES_META[def.bonus.res].nameKey),
+      });
+    } else {
+      bonusText = tr(lang, 'ach.bonusBoost', {
+        p: String(Math.round((def.bonus.mult - 1) * 100)),
+        tgt: tr(lang, 'ach.tgt.' + def.bonus.target),
+        d: String(def.bonus.dur),
+      });
+    }
+    return {
+      id: def.id, nameKey: def.nameKey, descKey: def.descKey,
+      done: s.achievements.includes(def.id),
+      bonusText,
+    };
+  });
+}

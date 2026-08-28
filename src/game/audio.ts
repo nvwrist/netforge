@@ -90,6 +90,7 @@ export class AudioManager {
   upgrade(): void { this.blip(392, 0.08, 'square', 0.12); this.blip(523, 0.08, 'square', 0.12, undefined, 0.07); this.blip(659, 0.12, 'square', 0.12, undefined, 0.14); }
   error(): void { this.blip(160, 0.16, 'sawtooth', 0.14, 90); }
   tech(): void { this.blip(523, 0.1, 'triangle', 0.16); this.blip(784, 0.16, 'triangle', 0.16, undefined, 0.09); }
+  ach(): void { this.blip(784, 0.08, 'triangle', 0.14); this.blip(988, 0.08, 'triangle', 0.14, undefined, 0.07); this.blip(1319, 0.16, 'triangle', 0.14, undefined, 0.14); }
   goal(): void {
     [523, 659, 784, 1046].forEach((f, i) => this.blip(f, 0.3, 'triangle', 0.16, undefined, i * 0.12));
   }

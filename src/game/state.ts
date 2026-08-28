@@ -1,11 +1,12 @@
-import { NODE_DEFS, TECH_DEFS, TUNE } from './data';
+import { LEGACY_CFG, NODE_DEFS, TECH_DEFS, TECH_LATE_MULT, TUNE } from './data';
 import type {
-  Connection, CostEntry, GameNode, GameState, NodeDef, NodeTypeId, Port,
+  Connection, CostEntry, GameNode, GameState, LifeStats, NodeDef, NodeTypeId, Port,
   ResourceId, TechDef, TechId, UpgradeId, Wallet,
 } from './types';
 
 export const NODE_W = 176;
 const HEADER_H = 26;
+const DATA_KEY = 'data' as const;
 
 // ── Geometry / layout (world units) ──────────────────────────────────────────
 
@@ -56,6 +57,7 @@ export function makeNode(state: GameState, type: NodeTypeId, x: number, y: numbe
   const node: GameNode = {
     id, type, x, y, level: 1, inv: {}, prod: 0,
     status: 'idle', statusT: 0, ports, flash: 0, flashColor: '#3fc1ff',
+    surgeWindow: 0, surgeActive: 0,
   };
   state.nodes.push(node);
   return node;
@@ -103,6 +105,7 @@ export function createConnection(state: GameState, fromPortId: string, toPortId:
   const t = findPort(state, toPortId);
   if (f) f.port.connectionId = conn.id;
   if (t) t.port.connectionId = conn.id;
+  state.stats.life.conns++;
   return conn;
 }
 
@@ -130,10 +133,11 @@ export function removeNode(state: GameState, nodeId: string): void {
 
 // ── Economy helpers ──────────────────────────────────────────────────────────
 
-export function costOf(def: NodeDef, owned: number): Partial<Record<ResourceId, number>> {
+export function costOf(state: GameState, def: NodeDef, owned: number): Partial<Record<ResourceId, number>> {
+  const scale = Math.pow(LEGACY_CFG.costScale, state.prestigeCount);
   const out: Partial<Record<ResourceId, number>> = {};
   (Object.keys(def.cost) as ResourceId[]).forEach((r) => {
-    out[r] = Math.ceil((def.cost[r] ?? 0) * Math.pow(def.costGrowth, owned));
+    out[r] = Math.ceil((def.cost[r] ?? 0) * Math.pow(def.costGrowth, owned) * scale);
   });
   return out;
 }
@@ -145,7 +149,7 @@ export function toEntries(cost: Partial<Record<ResourceId, number>>): CostEntry[
 export function canPay(wallet: Wallet, cost: Partial<Record<ResourceId, number>>): boolean {
   return (Object.keys(cost) as ResourceId[]).every((r) => {
     const need = cost[r] ?? 0;
-    const have = r === 'data' ? wallet.data : r === 'credits' ? wallet.credits : 0;
+    const have = r === DATA_KEY ? wallet.data : r === 'credits' ? wallet.credits : 0;
     return have >= need;
   });
 }
@@ -153,14 +157,14 @@ export function canPay(wallet: Wallet, cost: Partial<Record<ResourceId, number>>
 export function pay(wallet: Wallet, cost: Partial<Record<ResourceId, number>>): void {
   (Object.keys(cost) as ResourceId[]).forEach((r) => {
     const need = cost[r] ?? 0;
-    if (r === 'data') wallet.data -= need;
+    if (r === DATA_KEY) wallet.data -= need;
     else if (r === 'credits') wallet.credits -= need;
   });
 }
 
 export function nodeUpgradeCost(node: GameNode): CostEntry {
   const def = NODE_DEFS[node.type];
-  const res: ResourceId = def.cost.credits ? 'credits' : 'data';
+  const res: ResourceId = def.cost.credits ? 'credits' : DATA_KEY;
   const base = res === 'credits' ? (def.cost.credits ?? 10) : (def.cost.data ?? 20);
   return { res, amount: Math.ceil(base * 4 * Math.pow(2.2, node.level - 1)) };
 }
@@ -170,9 +174,35 @@ export function ownedCount(state: GameState, type: NodeTypeId): number {
 }
 
 export function isUnlocked(state: GameState, def: NodeDef): boolean {
-  if (def.requireCore) return state.coreOnline;
+  if (def.requireCore) return state.coreTier >= 1;
   if (!def.tech) return true;
   return state.techs.includes(def.tech);
+}
+
+// ── Tech tree (branched) ─────────────────────────────────────────────────────
+
+export function techAvailable(state: GameState, def: TechDef): boolean {
+  if (!def.requires) return true;
+  return state.techs.includes(def.requires);
+}
+
+export function techIsLate(state: GameState, def: TechDef): boolean {
+  if (!def.path) return false;
+  const other = def.path === 'A' ? 'B' : 'A';
+  return TECH_DEFS.some((t) => t.path === other && state.techs.includes(t.id));
+}
+
+export function techCost(state: GameState, def: TechDef): Partial<Record<ResourceId, number>> {
+  const mult = techIsLate(state, def) ? TECH_LATE_MULT : 1;
+  const out: Partial<Record<ResourceId, number>> = {};
+  (Object.keys(def.cost) as ResourceId[]).forEach((r) => {
+    out[r] = Math.ceil((def.cost[r] ?? 0) * mult);
+  });
+  return out;
+}
+
+export function techById(id: TechId): TechDef | null {
+  return TECH_DEFS.find((t) => t.id === id) ?? null;
 }
 
 // ── Capacities ───────────────────────────────────────────────────────────────
@@ -192,33 +222,46 @@ export function inputCapFor(state: GameState, node: GameNode, res: ResourceId): 
   return 12;
 }
 
-export function techById(id: TechId): TechDef | null {
-  return TECH_DEFS.find((t) => t.id === id) ?? null;
-}
-
 export function defaultUpgrades(): Record<UpgradeId, number> {
   return { bandwidth: 0, storageCap: 0, prodSpeed: 0, procSpeed: 0, packetSize: 0 };
 }
 
+function defaultLife(): LifeStats {
+  const l = { credits: 0, fragments: 0, conns: 0, nodes: 0, upgrades: 0, time: 0 } as LifeStats;
+  l.data = 0;
+  return l;
+}
+
 // ── Initial state ────────────────────────────────────────────────────────────
 
-export function newGame(): GameState {
+export function newGame(keep?: { legacy: number; prestigeCount: number; life: LifeStats; achievements: string[]; lang: GameState['lang']; muted: boolean }): GameState {
+  const prestigeCount = keep?.prestigeCount ?? 0;
+  const startData = Math.round(60 * (1 + LEGACY_CFG.startDataBonus * prestigeCount));
+  const wallet: Wallet = { credits: 0 } as Wallet;
+  wallet.data = startData;
   const state: GameState = {
-    wallet: { data: 60, credits: 0 },
+    wallet,
     fragments: 0,
-    coreOnline: false,
+    coreTier: 0,
+    coreFragments: 0,
+    legacy: keep?.legacy ?? 0,
+    prestigeCount,
+    researchTier: 0,
+    achievements: keep?.achievements ?? [],
+    boosts: {},
     nodes: [],
     connections: [],
     techs: [],
     upgrades: defaultUpgrades(),
-    tutorialStep: 0,
+    tutorialStep: prestigeCount > 0 ? -1 : 0,
     camX: -110, camY: 0, camZoom: 1,
-    lang: 'ru',
-    muted: false,
+    lang: keep?.lang ?? 'ru',
+    muted: keep?.muted ?? false,
     seq: 1,
-    stats: { delivered: 0, placed: 2 },
+    storageTipShown: keep ? true : false,
+    stats: { delivered: 0, placed: 2, runCredits: 0, life: keep?.life ?? defaultLife() },
   };
-  // Starter factory: RELAY → STORAGE (spec §44)
+  // Starter factory: RELAY → STORAGE
   const relay = makeNode(state, 'relay', -300, -55);
   const storage = makeNode(state, 'storage', 40, -60);
   createConnection(state, relay.ports.find((p) => p.dir === 'out')!.id, storage.ports.find((p) => p.dir === 'in')!.id);

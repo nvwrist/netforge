@@ -1,5 +1,5 @@
-import { useState, useSyncExternalStore } from 'react';
-import { CATEGORY_ORDER, GOAL_FRAGMENTS, NODE_DEFS, RES_META, fmt, fmtRate, tr } from '../game/data';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { CATEGORY_ORDER, NODE_DEFS, RES_META, fmt, fmtRate, tr } from '../game/data';
 import type { Game } from '../game/Game';
 import type { CostEntry, ResourceId, UISnapshot } from '../game/types';
 
@@ -69,7 +69,7 @@ export function ResIcon({ res, size = 12 }: { res: ResourceId; size?: number }) 
 
 export function CostChips({ cost, afford, lang }: { cost: CostEntry[]; afford: boolean; lang: 'ru' | 'en' }) {
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="inline-flex items-center gap-2 flex-wrap">
       {cost.map((e) => (
         <span key={e.res} className={`inline-flex items-center gap-1 text-[11px] font-semibold ${afford ? 'text-[#a9bad0]' : 'text-[#ff5d5d]'}`}>
           <ResIcon res={e.res} />{fmt(e.amount)}
@@ -82,11 +82,40 @@ export function CostChips({ cost, afford, lang }: { cost: CostEntry[]; afford: b
 
 // ── top bar ──────────────────────────────────────────────────────────────────
 
+function RateLabel({ rate, lang }: { rate: number; lang: 'ru' | 'en' }) {
+  if (Math.abs(rate) < 0.05) return <span className="text-[8px] text-[#46586e] leading-none">&nbsp;</span>;
+  const up = rate > 0;
+  return (
+    <span className={`text-[8px] font-bold leading-none ${up ? 'text-[#45e08c]' : 'text-[#ff5d5d]'}`}>
+      {up ? '▲ +' : '▼ '}{fmtRate(rate)}{tr(lang, 'hud.pcs')}
+    </span>
+  );
+}
+
 export function TopBar({ game }: { game: Game }) {
   const s = useGameUI(game);
   const [armReset, setArmReset] = useState(false);
   const L = (k: string) => tr(s.lang, k);
-  const goalPct = Math.min(100, (s.fragments / GOAL_FRAGMENTS) * 100);
+  const dataRef = useRef<HTMLSpanElement>(null);
+  const creditsRef = useRef<HTMLSpanElement>(null);
+  const fragRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const t: Record<string, { x: number; y: number }> = {};
+    const put = (key: string, el: HTMLSpanElement | null) => {
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      t[key] = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    put('data', dataRef.current);
+    put('credits', creditsRef.current);
+    put('fragment', fragRef.current);
+    game.setHudTargets(t);
+  });
+
+  const tierPct = Math.min(100, (s.coreFragments / Math.max(1, s.coreGoal)) * 100);
+  const R = 11;
+  const CIRC = 2 * Math.PI * R;
 
   return (
     <div className="absolute top-0 inset-x-0 z-30 h-12 flex items-center gap-3 px-3 bg-[#10161f]/95 border-b border-[#223041]">
@@ -97,25 +126,47 @@ export function TopBar({ game }: { game: Game }) {
       <div className="h-6 w-px bg-[#223041] hidden sm:block" />
 
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1 min-w-0">
-        <span className="hud-chip">
-          <ResIcon res="data" size={13} />
-          <b className="text-[#3fc1ff]">{fmt(s.data)}</b>
+        <span ref={dataRef} className="hud-chip flex-col !items-start !gap-0 !py-1">
+          <span className="flex items-center gap-1.5">
+            <ResIcon res="data" size={13} />
+            <b className="text-[#3fc1ff] text-[12px]">{fmt(s.walletData)}</b>
+          </span>
+          <RateLabel rate={s.dataRate} lang={s.lang} />
         </span>
-        <span className="hud-chip">
-          <ResIcon res="credits" size={13} />
-          <b className="text-[#ffd24a]">{fmt(s.credits)}</b>
+        <span ref={creditsRef} className="hud-chip flex-col !items-start !gap-0 !py-1">
+          <span className="flex items-center gap-1.5">
+            <ResIcon res="credits" size={13} />
+            <b className="text-[#ffd24a] text-[12px]">{fmt(s.credits)}</b>
+          </span>
+          <RateLabel rate={s.creditsRate} lang={s.lang} />
         </span>
-        <span className="hud-chip min-w-[128px]">
-          <ResIcon res="fragment" size={13} />
-          <b className="text-[#45e08c]">{fmt(s.fragments)}</b>
-          <span className="text-[#5c6b7f] text-[10px]">/ {GOAL_FRAGMENTS}</span>
-          <span className="w-10 h-1.5 bg-[#10161d] border border-[#24303f] inline-block ml-1">
-            <span className="block h-full bg-[#45e08c]" style={{ width: `${goalPct}%` }} />
+        <span ref={fragRef} className="hud-chip min-w-[120px]">
+          <svg width="26" height="26" viewBox="0 0 26 26" className="-rotate-90">
+            <circle cx="13" cy="13" r={R} fill="none" stroke="#1c2735" strokeWidth="2.5" />
+            <circle
+              cx="13" cy="13" r={R} fill="none"
+              stroke={s.coreOnline ? '#45e08c' : '#45e08c'}
+              strokeWidth="2.5"
+              strokeDasharray={CIRC}
+              strokeDashoffset={CIRC * (1 - tierPct / 100)}
+              style={{ transition: 'stroke-dashoffset 0.3s' }}
+            />
+          </svg>
+          <span className="absolute" />
+          <b className="text-[#45e08c] text-[12px] -ml-[22px] mr-1">{fmt(s.coreFragments)}</b>
+          <span className="text-[#5c6b7f] text-[9px] whitespace-nowrap">/ {fmt(s.coreGoal)}</span>
+          <span className={`text-[9px] font-bold px-1 border ${s.coreOnline ? 'text-[#ffd24a] border-[#ffd24a]/50' : 'text-[#5c6b7f] border-[#33465e]'}`}>
+            T{s.coreTier + 1}
           </span>
         </span>
+        {s.legacy > 0 && (
+          <span className="hud-chip" title={L('hud.legacy')}>
+            <span className="text-[#c792ff] font-bold text-[11px]">◆ {fmt(s.legacy)}</span>
+          </span>
+        )}
       </div>
 
-      <div className="hidden md:flex items-center gap-3 text-[10px] text-[#7d8ca0] whitespace-nowrap">
+      <div className="hidden lg:flex items-center gap-3 text-[10px] text-[#7d8ca0] whitespace-nowrap">
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-[#45e08c] animate-pulse" />
           <span className="text-[#a9bad0] font-semibold">{L('hud.net')}: {L('hud.online')}</span>
@@ -126,8 +177,18 @@ export function TopBar({ game }: { game: Game }) {
       </div>
 
       <div className="flex items-center gap-1">
-        <button className="hud-btn font-display font-bold" onClick={() => game.setCodexOpen(true)} title={L('menu.codex')}>▣</button>
-        <button className="hud-btn" onClick={() => game.setHelpOpen(true)} title={L('help.title')}>⌨</button>
+        <button className="hud-btn" onClick={() => game.setLeaderboardOpen(true)} title={L('lb.title')}>
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M3.5 2h7v3.5a3.5 3.5 0 0 1-7 0V2Z" stroke="#ffd24a" strokeWidth="1.2" />
+            <path d="M3.5 3H1.8v1.2A2.3 2.3 0 0 0 4 6.4M10.5 3h1.7v1.2a2.3 2.3 0 0 1-2.2 2.2M7 9v2M4.8 12.2h4.4" stroke="#ffd24a" strokeWidth="1.2" />
+          </svg>
+        </button>
+        <button className="hud-btn" onClick={() => game.setCodexOpen(true)} title={L('menu.codex')}>
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M2.5 2.2h4A1.5 1.5 0 0 1 8 3.7v7.6a1.5 1.5 0 0 0-1.5-1.5h-4V2.2ZM11.5 2.2h-4A1.5 1.5 0 0 0 6 3.7v7.6A1.5 1.5 0 0 1 7.5 9.8h4V2.2Z" stroke="#3fc1ff" strokeWidth="1.1" />
+          </svg>
+        </button>
+        <button className="hud-btn" onClick={() => game.setHelpOpen(true)} title={L('help.title')}>?</button>
         <button className="hud-btn" onClick={() => game.toggleMute()} title="sound">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
             <path d="M2 5.5v3h2.5L8 11V3L4.5 5.5H2Z" fill="#a9bad0" />
@@ -139,6 +200,15 @@ export function TopBar({ game }: { game: Game }) {
         <button className="hud-btn font-display font-bold text-[11px]" onClick={() => game.setLang(s.lang === 'ru' ? 'en' : 'ru')}>
           {s.lang === 'ru' ? 'EN' : 'RU'}
         </button>
+        {s.prestigeReady && (
+          <button
+            className="hud-btn font-display font-bold text-[10px] !text-[#c792ff] !border-[#c792ff]/40 hover:!border-[#c792ff]"
+            onClick={() => game.setPrestigeOpen(true)}
+            title={L('prestige.title')}
+          >
+            ⟳+
+          </button>
+        )}
         <button
           className={`hud-btn ${armReset ? '!text-[#ff5d5d] !border-[#ff5d5d]/60' : ''}`}
           onClick={() => {
@@ -175,9 +245,9 @@ export function ViewControls({ game }: { game: Game }) {
   );
 }
 
-// ── shop / tech / upgrades ───────────────────────────────────────────────────
+// ── shop / tech / upgrades / achievements ────────────────────────────────────
 
-type Tab = 'nodes' | 'tech' | 'upgrades';
+type Tab = 'nodes' | 'tech' | 'upgrades' | 'ach';
 
 export function ShopPanel({ game }: { game: Game }) {
   const s = useGameUI(game);
@@ -195,6 +265,10 @@ export function ShopPanel({ game }: { game: Game }) {
     );
   }
 
+  const baseTech = s.techs.find((t) => t.path === null);
+  const pathA = s.techs.filter((t) => t.path === 'A');
+  const pathB = s.techs.filter((t) => t.path === 'B');
+
   return (
     <div className="absolute left-0 top-12 bottom-0 z-20 w-[248px] max-w-[78vw] bg-[#111722]/97 border-r border-[#223041] flex flex-col">
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
@@ -202,17 +276,18 @@ export function ShopPanel({ game }: { game: Game }) {
         <button className="hud-btn" onClick={() => game.setShopOpen(false)}>✕</button>
       </div>
       <div className="flex gap-1 px-3 pb-2">
-        {(['nodes', 'tech', 'upgrades'] as Tab[]).map((t) => (
+        {(['nodes', 'tech', 'upgrades', 'ach'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-1 text-[10px] font-display font-bold tracking-wider border transition-colors ${
+            className={`flex-1 py-1 text-[9px] font-display font-bold tracking-wider border transition-colors ${
               tab === t
                 ? 'bg-[#1b2634] border-[#3fc1ff]/50 text-[#3fc1ff]'
                 : 'border-[#223041] text-[#7d8ca0] hover:text-[#a9bad0]'
             }`}
           >
-            {L(t === 'nodes' ? 'shop.tabNodes' : t === 'tech' ? 'shop.tabTech' : 'shop.tabUpg')}
+            {L(t === 'nodes' ? 'shop.tabNodes' : t === 'tech' ? 'shop.tabTech' : t === 'upgrades' ? 'shop.tabUpg' : 'shop.tabAch')}
+            {t === 'ach' && <span className="text-[#5c6b7f]"> {s.achDone}/{s.achTotal}</span>}
           </button>
         ))}
       </div>
@@ -252,7 +327,7 @@ export function ShopPanel({ game }: { game: Game }) {
                       ? <CostChips cost={item.cost} afford={item.afford} lang={s.lang} />
                       : (
                         <span className="text-[9px] font-bold tracking-wider text-[#ffb02e]">
-                          ▣ {L(NODE_DEFS[item.id].requireCore ? 'shop.lockedCore' : 'shop.locked')}
+                          ▣ {L(item.requireCore ? 'shop.lockedCore' : 'shop.locked')}
                         </span>
                       )}
                   </button>
@@ -262,39 +337,51 @@ export function ShopPanel({ game }: { game: Game }) {
           );
         })}
 
-        {tab === 'tech' && s.techs.map((t) => (
-          <div key={t.id} className={`w-full text-left panel p-2.5 ${t.unlocked ? 'opacity-70' : ''}`}>
-            <div className="font-display font-bold text-[12.5px] tracking-wide text-[#d5e1ef]">{L(t.nameKey)}</div>
-            <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5">{L(t.descKey)}</div>
-            <div className="text-[9px] text-[#5c6b7f] mt-0.5 mb-1.5">
-              ▸ {t.unlocksKeys.map((k) => L(k)).join(' · ')}
-            </div>
-            {t.unlocked ? (
-              <span className="text-[10px] font-bold text-[#45e08c]">✓ {L('hud.online')}</span>
-            ) : (
+        {tab === 'tech' && (
+          <>
+            {/* endless research */}
+            <div className="panel p-2.5 border-[#c792ff]/30">
+              <div className="flex items-center justify-between">
+                <span className="font-display font-bold text-[12px] tracking-wide text-[#c792ff]">{L('research.name')}</span>
+                <span className="text-[10px] font-bold text-[#c792ff]">{L('hud.tier')} {s.researchTier}</span>
+              </div>
+              <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5 mb-1.5">{L('research.d')}</div>
               <button
-                onClick={() => game.unlockTech(t.id)}
-                className={`mt-0.5 inline-flex items-center gap-2 border px-2 py-1 text-[10px] font-bold tracking-wider transition-colors ${
-                  t.afford
-                    ? 'border-[#45e08c]/50 text-[#45e08c] hover:bg-[#45e08c]/10'
+                onClick={() => game.buyResearch()}
+                className={`inline-flex items-center gap-2 border px-2 py-1 text-[10px] font-bold tracking-wider transition-colors ${
+                  s.researchAfford
+                    ? 'border-[#c792ff]/50 text-[#c792ff] hover:bg-[#c792ff]/10'
                     : 'border-[#33465e] text-[#5c6b7f] cursor-not-allowed'
                 }`}
               >
-                <CostChips cost={t.cost} afford={t.afford} lang={s.lang} />
+                <CostChips cost={s.researchCost} afford={s.researchAfford} lang={s.lang} />
               </button>
+            </div>
+
+            {baseTech && (
+              <TechCard t={baseTech} game={game} s={s} />
             )}
-          </div>
-        ))}
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
+                <div className="font-display font-bold text-[9px] tracking-[0.14em] text-[#4fe3c1] text-center border border-[#4fe3c1]/25 py-1">{L('shop.pathA')}</div>
+                <div className="text-[8.5px] text-[#5c6b7f] leading-snug text-center -mt-1">{L('shop.pathA.d')}</div>
+                {pathA.map((t) => <TechCard key={t.id} t={t} game={game} s={s} />)}
+              </div>
+              <div className="space-y-2">
+                <div className="font-display font-bold text-[9px] tracking-[0.14em] text-[#8fb7ff] text-center border border-[#8fb7ff]/25 py-1">{L('shop.pathB')}</div>
+                <div className="text-[8.5px] text-[#5c6b7f] leading-snug text-center -mt-1">{L('shop.pathB.d')}</div>
+                {pathB.map((t) => <TechCard key={t.id} t={t} game={game} s={s} />)}
+              </div>
+            </div>
+          </>
+        )}
 
         {tab === 'upgrades' && s.upgrades.map((u) => (
           <div key={u.id} className="w-full text-left panel p-2.5">
             <div className="flex items-center justify-between">
               <span className="font-display font-bold text-[12px] tracking-wide text-[#d5e1ef]">{L(u.nameKey)}</span>
-              <span className="flex gap-0.5">
-                {Array.from({ length: u.max }).map((_, i) => (
-                  <span key={i} className={`w-2 h-2 border ${i < u.level ? 'bg-[#ffb02e] border-[#ffb02e]' : 'border-[#33465e]'}`} />
-                ))}
-              </span>
+              <span className="text-[10px] font-bold text-[#ffb02e]">{L('info.lvl')} {u.level}</span>
             </div>
             <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5 mb-1.5">{L(u.descKey)}</div>
             {u.level >= u.max ? (
@@ -313,7 +400,54 @@ export function ShopPanel({ game }: { game: Game }) {
             )}
           </div>
         ))}
+
+        {tab === 'ach' && s.achievements.map((a) => (
+          <div key={a.id} className={`w-full text-left panel p-2.5 ${a.done ? 'border-[#45e08c]/40' : ''}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className={`font-display font-bold text-[12px] tracking-wide ${a.done ? 'text-[#45e08c]' : 'text-[#d5e1ef]'}`}>
+                {a.done ? '✓ ' : ''}{L(a.nameKey)}
+              </span>
+              <span className="text-[9px] font-bold text-[#ffd24a] whitespace-nowrap">{a.bonusText}</span>
+            </div>
+            <div className="text-[10px] text-[#7d8ca0] leading-snug mt-0.5">{L(a.descKey)}</div>
+            {a.done && <div className="text-[9px] font-bold text-[#45e08c] mt-1">{L('ach.done')}</div>}
+          </div>
+        ))}
       </div>
+    </div>
+  );
+}
+
+function TechCard({ t, game, s }: { t: UISnapshot['techs'][number]; game: Game; s: UISnapshot }) {
+  const L = (k: string) => tr(s.lang, k);
+  return (
+    <div className={`w-full text-left panel p-2.5 ${t.unlocked ? 'opacity-70' : !t.available ? 'opacity-45' : ''}`}>
+      <div className="font-display font-bold text-[11.5px] tracking-wide text-[#d5e1ef]">{L(t.nameKey)}</div>
+      <div className="text-[9.5px] text-[#7d8ca0] leading-snug mt-0.5">{L(t.descKey)}</div>
+      <div className="text-[8.5px] text-[#5c6b7f] mt-0.5 mb-1.5">
+        ▸ {t.unlocksKeys.map((k) => L(k)).join(' · ')}
+      </div>
+      {t.unlocked ? (
+        <span className="text-[10px] font-bold text-[#45e08c]">✓ {L('hud.online')}</span>
+      ) : !t.available ? (
+        <span className="text-[9px] font-bold tracking-wider text-[#5c6b7f]">
+          {L('shop.requires')}: {t.requiresKey ? L(t.requiresKey) : ''}
+        </span>
+      ) : (
+        <button
+          onClick={() => game.unlockTech(t.id)}
+          className={`mt-0.5 inline-flex items-center gap-2 border px-2 py-1 text-[10px] font-bold tracking-wider transition-colors ${
+            t.afford
+              ? 'border-[#45e08c]/50 text-[#45e08c] hover:bg-[#45e08c]/10'
+              : 'border-[#33465e] text-[#5c6b7f] cursor-not-allowed'
+          }`}
+        >
+          <CostChips cost={t.cost} afford={t.afford} lang={s.lang} />
+        </button>
+      )}
+      {!t.unlocked && t.late && (
+        <div className="text-[8.5px] font-bold tracking-wider text-[#ffb02e] mt-1">⚠ {L('shop.late')}</div>
+      )}
     </div>
   );
 }
@@ -338,6 +472,7 @@ export function InfoPanel({ game }: { game: Game }) {
       <div className="flex items-center gap-1.5 mt-1">
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor }} />
         <span className="text-[10px] font-bold tracking-wider" style={{ color: statusColor }}>{L(sel.statusKey)}</span>
+        {sel.surge > 0 && <span className="text-[10px] font-bold text-[#ffb02e] ml-1">×3 · {Math.ceil(sel.surge)}s</span>}
       </div>
 
       <div className="mt-2 space-y-1.5">
@@ -358,50 +493,44 @@ export function InfoPanel({ game }: { game: Game }) {
         <div className="mt-2 pt-2 border-t border-[#223041] text-[9.5px] text-[#a9bad0] leading-relaxed">
           <span className="text-[#5c6b7f] font-bold">{L('info.recipe')}: </span>
           {sel.recipe.inputs.map((i, idx) => (
-            <span key={idx}>
-              {idx > 0 && <span className="text-[#5c6b7f]"> + </span>}
-              <span style={{ color: RES_META[i.resource].color }}>{i.amount} {L(RES_META[i.resource].nameKey)}</span>
+            <span key={'i' + idx}>
+              {idx > 0 && ' + '}<b style={{ color: RES_META[i.resource].color }}>{i.amount} {L(RES_META[i.resource].nameKey)}</b>
             </span>
           ))}
-          {sel.recipe.inputs.length > 0 && <span className="text-[#5c6b7f]"> → </span>}
+          {sel.recipe.inputs.length > 0 && ' → '}
           {sel.recipe.outputs.map((o, idx) => (
-            <span key={idx}>
-              {idx > 0 && <span className="text-[#5c6b7f]"> + </span>}
-              <span style={{ color: RES_META[o.resource].color }}>{o.amount} {L(RES_META[o.resource].nameKey)}</span>
+            <span key={'o' + idx}>
+              {idx > 0 && ' + '}<b style={{ color: RES_META[o.resource].color }}>{o.amount} {L(RES_META[o.resource].nameKey)}</b>
             </span>
           ))}
-          <span className="text-[#5c6b7f]"> / {sel.recipe.time.toFixed(1)}s</span>
+          <span className="text-[#5c6b7f]"> · {sel.recipe.time.toFixed(1)}{L('codex.sec')}</span>
         </div>
       )}
-
       {sel.rateLine && (
-        <div className="mt-1 text-[9.5px] text-[#7d8ca0]">
-          {L('info.rate')}: <b className="text-[#3fc1ff]">{fmtRate(sel.rateLine.qty / sel.rateLine.time)}{L('hud.pcs')}</b>
+        <div className="mt-1.5 text-[9.5px] text-[#7d8ca0]">
+          {L('info.rate')}: <b className="text-[#3fc1ff]">{fmtRate(sel.rateLine.qty / sel.rateLine.time)}</b> {L(RES_META.data.nameKey).toLowerCase()}{L('hud.pcs')}
         </div>
       )}
 
-      <div className="mt-2.5 flex gap-1.5">
+      <div className="flex gap-2 mt-2.5">
         <button
           onClick={() => game.upgradeNode(sel.id)}
           disabled={sel.maxed || !sel.canUpgrade}
-          className={`flex-1 border px-2 py-1.5 text-[10px] font-display font-bold tracking-wider transition-colors ${
+          className={`flex-1 py-1.5 text-[10px] font-bold tracking-wider border transition-colors ${
             sel.maxed
-              ? 'border-[#24303f] text-[#5c6b7f] cursor-not-allowed'
+              ? 'border-[#24303f] text-[#5c6b7f] cursor-default'
               : sel.canUpgrade
-                ? 'border-[#ffb02e]/60 text-[#ffb02e] hover:bg-[#ffb02e]/10 active:scale-[0.98]'
-                : 'border-[#33465e] text-[#5c6b7f] cursor-not-allowed'
+                ? 'border-[#ffb02e]/60 text-[#ffb02e] hover:bg-[#ffb02e]/10'
+                : 'border-[#24303f] text-[#5c6b7f] cursor-not-allowed'
           }`}
         >
           {sel.maxed ? L('info.max') : (
-            <span className="inline-flex items-center justify-center gap-1.5">
-              {L('info.upgrade')}
-              <ResIcon res={sel.upgradeCost.res} size={10} />{fmt(sel.upgradeCost.amount)}
-            </span>
+            <span>{L('info.upgrade')} · <CostChips cost={[sel.upgradeCost]} afford={sel.canUpgrade} lang={s.lang} /></span>
           )}
         </button>
         <button
           onClick={() => game.deleteNodeById(sel.id)}
-          className="border border-[#ff5d5d]/40 text-[#ff5d5d] px-2 py-1.5 text-[10px] font-display font-bold tracking-wider hover:bg-[#ff5d5d]/10 active:scale-[0.98] transition-colors"
+          className="px-2.5 py-1.5 text-[10px] font-bold tracking-wider border border-[#ff5d5d]/40 text-[#ff5d5d] hover:bg-[#ff5d5d]/10 transition-colors"
         >
           {L('info.delete')}
         </button>
