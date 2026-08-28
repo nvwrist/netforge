@@ -1,5 +1,5 @@
 import { ACHIEVEMENTS, NODE_DEFS, SURGE_CFG, TUNE } from './data';
-import { inputCapFor, storageCapacity } from './state';
+import { inputCapFor, storageCapFor } from './state';
 import type { GameNode, GameState, ResourceId } from './types';
 
 // Events emitted toward the presentation layer (floats, sounds). Engine stays pure logic.
@@ -122,16 +122,22 @@ export function updateProduction(state: GameState, dt: number, now: number, ev: 
         node.status = 'online';
       }
     } else if (def.category === 'storage') {
-      const cap = storageCapacity(state);
+      // Хранилище может держать любой ресурс (data / compute / signal).
+      // В резерв (wallet) стекают только валютные ресурсы — data и credits.
+      const res = def.inputs[0];
+      const cap = storageCapFor(state, def);
       void capMult;
-      const fill = node.inv.data ?? 0;
-      // The fuller the buffer, the faster it drains into the reserve.
-      const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
-      const take = Math.min(fill, rate * dt);
-      if (take > 0) {
-        node.inv.data = fill - take;
-        state.wallet.data += take;
-        ev.onReserve(take, node);
+      const fill = node.inv[res] ?? 0;
+      if (res === 'data' || res === 'credits') {
+        // The fuller the buffer, the faster it drains into the reserve.
+        const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
+        const take = Math.min(fill, rate * dt);
+        if (take > 0) {
+          node.inv[res] = fill - take;
+          if (res === 'data') state.wallet.data += take;
+          else state.wallet.credits += take;
+          ev.onReserve(take, node);
+        }
       }
       node.status = fill >= cap - 1e-6 ? 'full' : fill > 0.5 ? 'online' : 'idle';
     } else if (def.category === 'transfer') {

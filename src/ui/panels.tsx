@@ -252,6 +252,7 @@ type Tab = 'nodes' | 'tech' | 'upgrades' | 'ach';
 export function ShopPanel({ game }: { game: Game }) {
   const s = useGameUI(game);
   const [tab, setTab] = useState<Tab>('nodes');
+  const [pathTab, setPathTab] = useState<'A' | 'B'>('A');
   const L = (k: string) => tr(s.lang, k);
 
   if (!s.shopOpen) {
@@ -362,17 +363,37 @@ export function ShopPanel({ game }: { game: Game }) {
               <TechCard t={baseTech} game={game} s={s} />
             )}
 
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-2">
-                <div className="font-display font-bold text-[9px] tracking-[0.14em] text-[#4fe3c1] text-center border border-[#4fe3c1]/25 py-1">{L('shop.pathA')}</div>
-                <div className="text-[8.5px] text-[#5c6b7f] leading-snug text-center -mt-1">{L('shop.pathA.d')}</div>
-                {pathA.map((t) => <TechCard key={t.id} t={t} game={game} s={s} />)}
+            <div className="flex gap-1">
+              {([['A', pathA, '#4fe3c1', 'shop.pathA'], ['B', pathB, '#8fb7ff', 'shop.pathB']] as const).map(([p, list, accent, key]) => {
+                const unlockedInPath = list.filter((t) => t.unlocked).length;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setPathTab(p)}
+                    className={`flex-1 py-1.5 border font-display font-bold text-[10px] tracking-[0.12em] transition-colors ${
+                      pathTab === p
+                        ? 'bg-[#1b2634]'
+                        : 'border-[#223041] text-[#5c6b7f] hover:text-[#a9bad0]'
+                    }`}
+                    style={pathTab === p ? { borderColor: accent + '66', color: accent } : undefined}
+                  >
+                    {L(key)}
+                    {unlockedInPath > 0 && (
+                      <span className="ml-1.5 text-[#45e08c]">✓{unlockedInPath}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="space-y-2">
+              <div
+                className="text-[8.5px] text-[#5c6b7f] leading-snug"
+                style={{ color: pathTab === 'A' ? '#4fe3c1' : '#8fb7ff' }}
+              >
+                {L(pathTab === 'A' ? 'shop.pathA.d' : 'shop.pathB.d')}
               </div>
-              <div className="space-y-2">
-                <div className="font-display font-bold text-[9px] tracking-[0.14em] text-[#8fb7ff] text-center border border-[#8fb7ff]/25 py-1">{L('shop.pathB')}</div>
-                <div className="text-[8.5px] text-[#5c6b7f] leading-snug text-center -mt-1">{L('shop.pathB.d')}</div>
-                {pathB.map((t) => <TechCard key={t.id} t={t} game={game} s={s} />)}
-              </div>
+              {(pathTab === 'A' ? pathA : pathB).map((t) => <TechCard key={t.id} t={t} game={game} s={s} />)}
             </div>
           </>
         )}

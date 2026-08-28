@@ -1,10 +1,13 @@
-import { ACHIEVEMENTS, NODE_DEFS } from './data';
+import { ACHIEVEMENTS } from './data';
 import { ownedCount } from './state';
-import type { AchievementDef, GameState, ResourceId } from './types';
+import type {
+  AchievementCondition, AchievementDef, GameState, NodeTypeId, ResourceId,
+} from './types';
 
-// Longest directed chain of connected nodes (for chain achievements).
+// Самая длинная направленная цепочка связанных узлов (для условий chainLength).
 function longestChain(state: GameState): number {
-  if (state.connections.length === 0) return state.nodes.length > 0 ? 1 : 0;
+  if (state.nodes.length === 0) return 0;
+  if (state.connections.length === 0) return 1;
   const adj = new Map<string, string[]>();
   for (const c of state.connections) {
     const a = c.fromPort.split('|')[0];
@@ -16,7 +19,7 @@ function longestChain(state: GameState): number {
   let best = 1;
   const visit = (id: string, depth: number, seen: Set<string>): void => {
     if (depth > best) best = depth;
-    if (depth > 40) return;
+    if (depth > 40) return; // предохранитель от глубокой рекурсии
     const next = adj.get(id);
     if (!next) return;
     for (const nx of next) {
@@ -34,33 +37,50 @@ function longestChain(state: GameState): number {
   return best;
 }
 
-function countType(state: GameState, type: string): number {
-  return ownedCount(state, type as GameState['nodes'][number]['type']);
+type StatKey = 'delivered' | 'credits' | 'fragments' | 'conns' | 'nodes' | 'upgrades' | 'time' | 'placed' | 'data';
+
+function statValue(state: GameState, stat: StatKey): number {
+  const s = state.stats;
+  const life = s.life;
+  switch (stat) {
+    case 'delivered': return s.delivered;
+    case 'placed': return s.placed;
+    case 'credits': return s.runCredits; // кредиты за текущий забег
+    case 'data': return life.data;
+    case 'fragments': return life.fragments;
+    case 'conns': return life.conns;
+    case 'nodes': return life.nodes;
+    case 'upgrades': return life.upgrades;
+    case 'time': return life.time;
+    default: return 0;
+  }
 }
 
-function check(state: GameState, id: string, chain: number): boolean {
-  const s = state.stats;
-  switch (id) {
-    case 'relay3': return countType(state, 'relay') >= 3;
-    case 'relay8': return countType(state, 'relay') >= 8;
-    case 'storage3': return countType(state, 'storage') >= 3;
-    case 'conn5': return s.life.conns >= 5;
-    case 'conn15': return s.life.conns >= 15;
-    case 'credits50': return s.runCredits >= 50;
-    case 'credits500': return s.runCredits >= 500;
-    case 'frag10': return s.life.fragments >= 10;
-    case 'frag50': return s.life.fragments >= 50;
-    case 'chain4': return chain >= 4;
-    case 'chain6': return chain >= 6;
-    case 'nodes10': return state.nodes.length >= 10;
-    case 'nodes25': return state.nodes.length >= 25;
-    case 'tech2': return state.techs.length >= 2;
-    case 'upg3': return s.life.upgrades >= 3;
-    case 'time5': return s.life.time >= 300;
-    case 'time20': return s.life.time >= 1200;
-    case 'tier1': return state.coreTier >= 1;
-    case 'prestige1': return state.prestigeCount >= 1;
-    default: return false;
+// Универсальный интерпретатор условий. Новое достижение не требует правки этого файла.
+export function evaluateCondition(state: GameState, cond: AchievementCondition, chain: number): boolean {
+  switch (cond.type) {
+    case 'nodeCount':
+      return ownedCount(state, cond.nodeType as NodeTypeId) >= cond.count;
+    case 'anyNodeCount':
+      return state.nodes.length >= cond.count;
+    case 'connectionCount':
+      return state.connections.length >= cond.count;
+    case 'statThreshold':
+      return statValue(state, cond.stat) >= cond.value;
+    case 'chainLength':
+      return chain >= cond.length;
+    case 'techCount':
+      return state.techs.length >= cond.count;
+    case 'coreTier':
+      return state.coreTier >= cond.tier;
+    case 'prestigeCount':
+      return state.prestigeCount >= cond.count;
+    case 'nodeTypeVariety': {
+      const types = new Set(state.nodes.map((n) => n.type));
+      return types.size >= cond.count;
+    }
+    default:
+      return false;
   }
 }
 
@@ -75,11 +95,12 @@ export class AchievementManager {
     if (this.acc < 1) return;
     this.acc = 0;
 
-    let chain = -1;
+    let chain = -1; // считаем лениво и один раз
     for (const def of ACHIEVEMENTS) {
       if (state.achievements.includes(def.id)) continue;
-      if (chain < 0 && (def.id === 'chain4' || def.id === 'chain6')) chain = longestChain(state);
-      if (!check(state, def.id, chain)) continue;
+      const needsChain = def.condition.type === 'chainLength';
+      if (needsChain && chain < 0) chain = longestChain(state);
+      if (!evaluateCondition(state, def.condition, needsChain ? chain : 0)) continue;
 
       state.achievements.push(def.id);
       if (def.bonus.kind === 'res') {
@@ -96,6 +117,5 @@ export class AchievementManager {
       }
       ev.unlock(def);
     }
-    void NODE_DEFS;
   }
 }

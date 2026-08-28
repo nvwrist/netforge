@@ -207,13 +207,19 @@ export function techById(id: TechId): TechDef | null {
 
 // ── Capacities ───────────────────────────────────────────────────────────────
 
+// Вместимость любого узла-хранилища с учётом глобального апгрейда «Объём хранилищ».
+export function storageCapFor(state: GameState, def: NodeDef): number {
+  return Math.round(def.capacity * (1 + TUNE.capPerLevel * state.upgrades.storageCap));
+}
+
+// Совместимость: вместимость классического хранилища ДАННЫХ.
 export function storageCapacity(state: GameState): number {
-  return Math.round(NODE_DEFS.storage.capacity * (1 + TUNE.capPerLevel * state.upgrades.storageCap));
+  return storageCapFor(state, NODE_DEFS.storage);
 }
 
 export function inputCapFor(state: GameState, node: GameNode, res: ResourceId): number {
   const def = NODE_DEFS[node.type];
-  if (def.category === 'storage') return storageCapacity(state);
+  if (def.category === 'storage') return storageCapFor(state, def);
   if (def.category === 'transfer') return def.capacity;
   if (def.recipe) {
     const need = def.recipe.inputs.find((i) => i.resource === res);

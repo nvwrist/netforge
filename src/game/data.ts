@@ -14,9 +14,10 @@ export const RES_META: Record<ResourceId, { color: string; nameKey: string }> = 
   encrypted: { color: '#c792ff', nameKey: 'res.encrypted' },
   fragment:  { color: '#45e08c', nameKey: 'res.fragment' },
   credits:   { color: '#ffd24a', nameKey: 'res.credits' },
+  signal:    { color: '#ff8a5c', nameKey: 'res.signal' },
 };
 
-export const RES_ORDER: ResourceId[] = [D, 'compute', 'processed', 'filtered', 'encrypted', 'fragment', 'credits'];
+export const RES_ORDER: ResourceId[] = [D, 'compute', 'processed', 'filtered', 'encrypted', 'fragment', 'credits', 'signal'];
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
 
@@ -171,11 +172,82 @@ export const NODE_DEFS: Record<NodeTypeId, NodeDef> = {
     },
     capacity: 20, requireCore: true,
   },
+  // ── Волна сырья: сенсоры → сигнал → анализ (Path A / телеметрия) ──
+  sensor: {
+    id: 'sensor', nameKey: 'nd.sensor', descKey: 'nd.sensor.d',
+    category: 'generator', cost: { credits: 60 }, costGrowth: 1.2,
+    inputs: [], outputs: ['signal'],
+    recipe: { inputs: [], outputs: [{ resource: 'signal', amount: 1 }], time: 2.2 },
+    capacity: 15, tech: 'telemetry',
+  },
+  signalbuffer: {
+    id: 'signalbuffer', nameKey: 'nd.signalbuffer', descKey: 'nd.signalbuffer.d',
+    category: 'storage', cost: { credits: 40 }, costGrowth: 1.2,
+    inputs: ['signal'], outputs: ['signal'],
+    capacity: 24, tech: 'telemetry',
+  },
+  analyzer: {
+    id: 'analyzer', nameKey: 'nd.analyzer', descKey: 'nd.analyzer.d',
+    category: 'processor', cost: { credits: 150 }, costGrowth: 1.25,
+    inputs: ['signal', 'compute'], outputs: [],
+    recipe: {
+      inputs: [{ resource: 'signal', amount: 2 }, { resource: 'compute', amount: 1 }],
+      outputs: [{ resource: 'fragment', amount: 1 }], time: 4.5,
+    },
+    capacity: 8, tech: 'telemetry',
+  },
+  // ── Хранилище вычислений (Path A) ──
+  computebank: {
+    id: 'computebank', nameKey: 'nd.computebank', descKey: 'nd.computebank.d',
+    category: 'storage', cost: { [D]: 220 }, costGrowth: 1.18,
+    inputs: ['compute'], outputs: ['compute'],
+    capacity: 24, tech: 'processing',
+  },
+  // ── Продвинутая маршрутизация (база) ──
+  smartrouter: {
+    id: 'smartrouter', nameKey: 'nd.smartrouter', descKey: 'nd.smartrouter.d',
+    category: 'transfer', cost: { [D]: 260 }, costGrowth: 1.2,
+    inputs: [D, D, D], outputs: [D, D, D],
+    capacity: 18, tech: 'routing',
+  },
+  // ── Кредитные процессоры (Path B / Path A) ──
+  compressor: {
+    id: 'compressor', nameKey: 'nd.compressor', descKey: 'nd.compressor.d',
+    category: 'processor', cost: { [D]: 700 }, costGrowth: 1.25,
+    inputs: ['processed', D], outputs: [],
+    recipe: {
+      inputs: [{ resource: 'processed', amount: 1 }, { resource: D, amount: 2 }],
+      outputs: [{ resource: 'credits', amount: 3 }], time: 5,
+    },
+    capacity: 8, tech: 'security',
+  },
+  assembler: {
+    id: 'assembler', nameKey: 'nd.assembler', descKey: 'nd.assembler.d',
+    category: 'processor', cost: { credits: 200 }, costGrowth: 1.28,
+    inputs: ['encrypted', 'processed'], outputs: [],
+    recipe: {
+      inputs: [{ resource: 'encrypted', amount: 1 }, { resource: 'processed', amount: 1 }],
+      outputs: [{ resource: 'fragment', amount: 1 }], time: 5,
+    },
+    capacity: 8, tech: 'encryptionTech',
+  },
+  forge: {
+    id: 'forge', nameKey: 'nd.forge', descKey: 'nd.forge.d',
+    category: 'processor', cost: { credits: 400 }, costGrowth: 1.3,
+    inputs: ['encrypted', 'compute'], outputs: [],
+    recipe: {
+      inputs: [{ resource: 'encrypted', amount: 1 }, { resource: 'compute', amount: 2 }],
+      outputs: [{ resource: 'credits', amount: 4 }], time: 5,
+    },
+    capacity: 8, tech: 'distributed',
+  },
 };
 
 export const SHOP_ORDER: NodeTypeId[] = [
-  'relay', 'storage', 'cache', 'compute', 'router', 'balancer', 'proxy', 'processor',
-  'archive', 'firewall', 'encryption', 'refinery', 'datacenter', 'hub', 'core',
+  'relay', 'sensor', 'storage', 'cache', 'computebank', 'signalbuffer',
+  'compute', 'router', 'smartrouter', 'balancer', 'proxy', 'processor', 'analyzer',
+  'archive', 'firewall', 'compressor', 'encryption', 'assembler', 'forge',
+  'refinery', 'datacenter', 'hub', 'core',
 ];
 
 export const CATEGORY_ORDER: NodeDef['category'][] = ['generator', 'storage', 'transfer', 'processor'];
@@ -183,11 +255,12 @@ export const CATEGORY_ORDER: NodeDef['category'][] = ['generator', 'storage', 't
 // ── Technologies (branched after routing) ────────────────────────────────────
 
 export const TECH_DEFS: TechDef[] = [
-  { id: 'routing',        nameKey: 'tc.routing',        descKey: 'tc.routing.d',        cost: { [D]: 150 },  unlocks: ['proxy', 'balancer'] },
-  { id: 'processing',     nameKey: 'tc.processing',     descKey: 'tc.processing.d',     cost: { [D]: 300 },  unlocks: ['processor', 'archive'], requires: 'routing', path: 'A' },
-  { id: 'security',       nameKey: 'tc.security',       descKey: 'tc.security.d',       cost: { [D]: 500 },  unlocks: ['firewall'], requires: 'routing', path: 'B' },
-  { id: 'encryptionTech', nameKey: 'tc.encryptionTech', descKey: 'tc.encryptionTech.d', cost: { [D]: 800 },  unlocks: ['encryption'], requires: 'security', path: 'B' },
-  { id: 'distributed',    nameKey: 'tc.distributed',    descKey: 'tc.distributed.d',    cost: { [D]: 1200 }, unlocks: ['datacenter', 'hub', 'refinery'], requires: 'processing', path: 'A' },
+  { id: 'routing',        nameKey: 'tc.routing',        descKey: 'tc.routing.d',        cost: { [D]: 150 },  unlocks: ['proxy', 'balancer', 'smartrouter'] },
+  { id: 'processing',     nameKey: 'tc.processing',     descKey: 'tc.processing.d',     cost: { [D]: 300 },  unlocks: ['processor', 'archive', 'computebank'], requires: 'routing', path: 'A' },
+  { id: 'telemetry',      nameKey: 'tc.telemetry',      descKey: 'tc.telemetry.d',      cost: { [D]: 450 },  unlocks: ['sensor', 'signalbuffer', 'analyzer'], requires: 'processing', path: 'A' },
+  { id: 'security',       nameKey: 'tc.security',       descKey: 'tc.security.d',       cost: { [D]: 500 },  unlocks: ['firewall', 'compressor'], requires: 'routing', path: 'B' },
+  { id: 'encryptionTech', nameKey: 'tc.encryptionTech', descKey: 'tc.encryptionTech.d', cost: { [D]: 800 },  unlocks: ['encryption', 'assembler'], requires: 'security', path: 'B' },
+  { id: 'distributed',    nameKey: 'tc.distributed',    descKey: 'tc.distributed.d',    cost: { [D]: 1200 }, unlocks: ['datacenter', 'hub', 'refinery', 'forge'], requires: 'processing', path: 'A' },
 ];
 
 // ── Global upgrades (endless) ────────────────────────────────────────────────
@@ -217,26 +290,53 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
 
 // ── Achievements ─────────────────────────────────────────────────────────────
 
+// Условия — декларативные (AchievementCondition). Новое достижение = новая строка здесь,
+// без правки кода. Награды растут вместе со сложностью условия.
 export const ACHIEVEMENTS: AchievementDef[] = [
-  { id: 'relay3',     nameKey: 'ach.relay3',     descKey: 'ach.relay3.d',     bonus: { kind: 'res', res: D, amount: 60 } },
-  { id: 'conn5',      nameKey: 'ach.conn5',      descKey: 'ach.conn5.d',      bonus: { kind: 'res', res: D, amount: 80 } },
-  { id: 'storage3',   nameKey: 'ach.storage3',   descKey: 'ach.storage3.d',   bonus: { kind: 'res', res: D, amount: 150 } },
-  { id: 'credits50',  nameKey: 'ach.credits50',  descKey: 'ach.credits50.d',  bonus: { kind: 'boost', target: 'proc', mult: 1.1, dur: 60 } },
-  { id: 'frag10',     nameKey: 'ach.frag10',     descKey: 'ach.frag10.d',     bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 60 } },
-  { id: 'chain4',     nameKey: 'ach.chain4',     descKey: 'ach.chain4.d',     bonus: { kind: 'boost', target: 'gen', mult: 1.1, dur: 60 } },
-  { id: 'relay8',     nameKey: 'ach.relay8',     descKey: 'ach.relay8.d',     bonus: { kind: 'boost', target: 'gen', mult: 1.15, dur: 60 } },
-  { id: 'nodes10',    nameKey: 'ach.nodes10',    descKey: 'ach.nodes10.d',    bonus: { kind: 'boost', target: 'all', mult: 1.05, dur: 90 } },
-  { id: 'conn15',     nameKey: 'ach.conn15',     descKey: 'ach.conn15.d',     bonus: { kind: 'boost', target: 'all', mult: 1.05, dur: 90 } },
-  { id: 'tech2',      nameKey: 'ach.tech2',      descKey: 'ach.tech2.d',      bonus: { kind: 'res', res: D, amount: 200 } },
-  { id: 'upg3',       nameKey: 'ach.upg3',       descKey: 'ach.upg3.d',       bonus: { kind: 'boost', target: 'proc', mult: 1.1, dur: 90 } },
-  { id: 'time5',      nameKey: 'ach.time5',      descKey: 'ach.time5.d',      bonus: { kind: 'boost', target: 'gen', mult: 1.1, dur: 120 } },
-  { id: 'credits500', nameKey: 'ach.credits500', descKey: 'ach.credits500.d', bonus: { kind: 'res', res: D, amount: 400 } },
-  { id: 'frag50',     nameKey: 'ach.frag50',     descKey: 'ach.frag50.d',     bonus: { kind: 'res', res: 'credits', amount: 20 } },
-  { id: 'chain6',     nameKey: 'ach.chain6',     descKey: 'ach.chain6.d',     bonus: { kind: 'res', res: 'credits', amount: 15 } },
-  { id: 'nodes25',    nameKey: 'ach.nodes25',    descKey: 'ach.nodes25.d',    bonus: { kind: 'res', res: 'credits', amount: 30 } },
-  { id: 'time20',     nameKey: 'ach.time20',     descKey: 'ach.time20.d',     bonus: { kind: 'res', res: 'credits', amount: 40 } },
-  { id: 'tier1',      nameKey: 'ach.tier1',      descKey: 'ach.tier1.d',      bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 120 } },
-  { id: 'prestige1',  nameKey: 'ach.prestige1',  descKey: 'ach.prestige1.d',  bonus: { kind: 'boost', target: 'all', mult: 1.15, dur: 120 } },
+  // ── Постройка конкретных узлов ──
+  { id: 'relay3',      nameKey: 'ach.relay3',      descKey: 'ach.relay3.d',      condition: { type: 'nodeCount', nodeType: 'relay', count: 3 },       bonus: { kind: 'res', res: D, amount: 60 } },
+  { id: 'relay8',      nameKey: 'ach.relay8',      descKey: 'ach.relay8.d',      condition: { type: 'nodeCount', nodeType: 'relay', count: 8 },       bonus: { kind: 'boost', target: 'gen', mult: 1.15, dur: 60 } },
+  { id: 'storage3',    nameKey: 'ach.storage3',    descKey: 'ach.storage3.d',    condition: { type: 'nodeCount', nodeType: 'storage', count: 3 },     bonus: { kind: 'res', res: D, amount: 150 } },
+  { id: 'router3',     nameKey: 'ach.router3',     descKey: 'ach.router3.d',     condition: { type: 'nodeCount', nodeType: 'router', count: 3 },      bonus: { kind: 'res', res: D, amount: 120 } },
+  { id: 'compute3',    nameKey: 'ach.compute3',    descKey: 'ach.compute3.d',    condition: { type: 'nodeCount', nodeType: 'compute', count: 3 },     bonus: { kind: 'res', res: D, amount: 200 } },
+  { id: 'processor3',  nameKey: 'ach.processor3',  descKey: 'ach.processor3.d',  condition: { type: 'nodeCount', nodeType: 'processor', count: 3 },   bonus: { kind: 'res', res: D, amount: 300 } },
+  { id: 'processor8',  nameKey: 'ach.processor8',  descKey: 'ach.processor8.d',  condition: { type: 'nodeCount', nodeType: 'processor', count: 8 },   bonus: { kind: 'res', res: 'credits', amount: 50 } },
+  { id: 'firewall3',   nameKey: 'ach.firewall3',   descKey: 'ach.firewall3.d',   condition: { type: 'nodeCount', nodeType: 'firewall', count: 3 },    bonus: { kind: 'res', res: 'credits', amount: 35 } },
+  // ── Разнообразие сети ──
+  { id: 'variety5',    nameKey: 'ach.variety5',    descKey: 'ach.variety5.d',    condition: { type: 'nodeTypeVariety', count: 5 },                    bonus: { kind: 'res', res: D, amount: 250 } },
+  { id: 'variety8',    nameKey: 'ach.variety8',    descKey: 'ach.variety8.d',    condition: { type: 'nodeTypeVariety', count: 8 },                    bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 90 } },
+  { id: 'variety12',   nameKey: 'ach.variety12',   descKey: 'ach.variety12.d',   condition: { type: 'nodeTypeVariety', count: 12 },                   bonus: { kind: 'res', res: 'credits', amount: 60 } },
+  // ── Связи ──
+  { id: 'conn5',       nameKey: 'ach.conn5',       descKey: 'ach.conn5.d',       condition: { type: 'connectionCount', count: 5 },                    bonus: { kind: 'res', res: D, amount: 80 } },
+  { id: 'conn15',      nameKey: 'ach.conn15',      descKey: 'ach.conn15.d',      condition: { type: 'connectionCount', count: 15 },                   bonus: { kind: 'boost', target: 'all', mult: 1.05, dur: 90 } },
+  { id: 'conn30',      nameKey: 'ach.conn30',      descKey: 'ach.conn30.d',      condition: { type: 'connectionCount', count: 30 },                   bonus: { kind: 'res', res: 'credits', amount: 45 } },
+  // ── Длина цепочки ──
+  { id: 'chain4',      nameKey: 'ach.chain4',      descKey: 'ach.chain4.d',      condition: { type: 'chainLength', length: 4 },                       bonus: { kind: 'boost', target: 'gen', mult: 1.1, dur: 60 } },
+  { id: 'chain6',      nameKey: 'ach.chain6',      descKey: 'ach.chain6.d',      condition: { type: 'chainLength', length: 6 },                       bonus: { kind: 'res', res: 'credits', amount: 15 } },
+  { id: 'chain10',     nameKey: 'ach.chain10',     descKey: 'ach.chain10.d',     condition: { type: 'chainLength', length: 10 },                      bonus: { kind: 'res', res: 'credits', amount: 60 } },
+  // ── Ресурсы за забег / жизнь ──
+  { id: 'credits50',   nameKey: 'ach.credits50',   descKey: 'ach.credits50.d',   condition: { type: 'statThreshold', stat: 'credits', value: 50 },    bonus: { kind: 'boost', target: 'proc', mult: 1.1, dur: 60 } },
+  { id: 'credits500',  nameKey: 'ach.credits500',  descKey: 'ach.credits500.d',  condition: { type: 'statThreshold', stat: 'credits', value: 500 },   bonus: { kind: 'res', res: D, amount: 400 } },
+  { id: 'credits2000', nameKey: 'ach.credits2000', descKey: 'ach.credits2000.d', condition: { type: 'statThreshold', stat: 'credits', value: 2000 },  bonus: { kind: 'boost', target: 'all', mult: 1.15, dur: 120 } },
+  { id: 'frag10',      nameKey: 'ach.frag10',      descKey: 'ach.frag10.d',      condition: { type: 'statThreshold', stat: 'fragments', value: 10 },  bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 60 } },
+  { id: 'frag50',      nameKey: 'ach.frag50',      descKey: 'ach.frag50.d',      condition: { type: 'statThreshold', stat: 'fragments', value: 50 },  bonus: { kind: 'res', res: 'credits', amount: 20 } },
+  { id: 'frag200',     nameKey: 'ach.frag200',     descKey: 'ach.frag200.d',     condition: { type: 'statThreshold', stat: 'fragments', value: 200 }, bonus: { kind: 'res', res: 'credits', amount: 80 } },
+  // ── Технологии и апгрейды ──
+  { id: 'tech2',       nameKey: 'ach.tech2',       descKey: 'ach.tech2.d',       condition: { type: 'techCount', count: 2 },                          bonus: { kind: 'res', res: D, amount: 200 } },
+  { id: 'tech5',       nameKey: 'ach.tech5',       descKey: 'ach.tech5.d',       condition: { type: 'techCount', count: 5 },                          bonus: { kind: 'res', res: 'credits', amount: 40 } },
+  { id: 'upg3',        nameKey: 'ach.upg3',        descKey: 'ach.upg3.d',        condition: { type: 'statThreshold', stat: 'upgrades', value: 3 },    bonus: { kind: 'boost', target: 'proc', mult: 1.1, dur: 90 } },
+  { id: 'upg10',       nameKey: 'ach.upg10',       descKey: 'ach.upg10.d',       condition: { type: 'statThreshold', stat: 'upgrades', value: 10 },   bonus: { kind: 'boost', target: 'proc', mult: 1.15, dur: 120 } },
+  // ── Время в сессии ──
+  { id: 'time5',       nameKey: 'ach.time5',       descKey: 'ach.time5.d',       condition: { type: 'statThreshold', stat: 'time', value: 300 },      bonus: { kind: 'boost', target: 'gen', mult: 1.1, dur: 120 } },
+  { id: 'time20',      nameKey: 'ach.time20',      descKey: 'ach.time20.d',      condition: { type: 'statThreshold', stat: 'time', value: 1200 },     bonus: { kind: 'res', res: 'credits', amount: 40 } },
+  { id: 'time60',      nameKey: 'ach.time60',      descKey: 'ach.time60.d',      condition: { type: 'statThreshold', stat: 'time', value: 3600 },     bonus: { kind: 'res', res: 'credits', amount: 70 } },
+  // ── Тир ядра ──
+  { id: 'tier1',       nameKey: 'ach.tier1',       descKey: 'ach.tier1.d',       condition: { type: 'coreTier', tier: 1 },                            bonus: { kind: 'boost', target: 'all', mult: 1.1, dur: 120 } },
+  { id: 'tier3',       nameKey: 'ach.tier3',       descKey: 'ach.tier3.d',       condition: { type: 'coreTier', tier: 3 },                            bonus: { kind: 'boost', target: 'all', mult: 1.2, dur: 180 } },
+  { id: 'tier5',       nameKey: 'ach.tier5',       descKey: 'ach.tier5.d',       condition: { type: 'coreTier', tier: 5 },                            bonus: { kind: 'boost', target: 'all', mult: 1.25, dur: 180 } },
+  // ── Престиж ──
+  { id: 'prestige1',   nameKey: 'ach.prestige1',   descKey: 'ach.prestige1.d',   condition: { type: 'prestigeCount', count: 1 },                      bonus: { kind: 'boost', target: 'all', mult: 1.15, dur: 120 } },
+  { id: 'prestige3',   nameKey: 'ach.prestige3',   descKey: 'ach.prestige3.d',   condition: { type: 'prestigeCount', count: 3 },                      bonus: { kind: 'boost', target: 'all', mult: 1.2, dur: 180 } },
 ];
 
 // ── Tutorial ─────────────────────────────────────────────────────────────────
@@ -318,6 +418,24 @@ const RU: Record<string, string> = {
   'ach.time20': 'Ночная смена', 'ach.time20.d': '20 минут непрерывной работы',
   'ach.tier1': 'Ядро живо', 'ach.tier1.d': 'Достигните тира 1 Ядра сети',
   'ach.prestige1': 'Второе дыхание', 'ach.prestige1.d': 'Выполните Network Reset',
+  'ach.router3': 'Развязка', 'ach.router3.d': 'Постройте 3 маршрутизатора',
+  'ach.compute3': 'Вычислительный кластер', 'ach.compute3.d': 'Постройте 3 сервера вычислений',
+  'ach.processor3': 'Цех обработки', 'ach.processor3.d': 'Постройте 3 процессора данных',
+  'ach.processor8': 'Конвейер', 'ach.processor8.d': 'Постройте 8 процессоров данных',
+  'ach.firewall3': 'Периметр', 'ach.firewall3.d': 'Постройте 3 файрвола',
+  'ach.variety5': 'Разнообразие', 'ach.variety5.d': '5 разных типов узлов в сети',
+  'ach.variety8': 'Экосистема', 'ach.variety8.d': '8 разных типов узлов в сети',
+  'ach.variety12': 'Полный стек', 'ach.variety12.d': '12 разных типов узлов в сети',
+  'ach.conn30': 'Паутина', 'ach.conn30.d': 'Создайте 30 связей',
+  'ach.chain10': 'Сквозной канал', 'ach.chain10.d': 'Цепочка из 10 узлов подряд',
+  'ach.credits2000': 'Магнат', 'ach.credits2000.d': 'Заработайте 2000 кредитов за забег',
+  'ach.frag200': 'Архивариус', 'ach.frag200.d': 'Соберите 200 фрагментов данных',
+  'ach.tech5': 'Технократ', 'ach.tech5.d': 'Откройте 5 технологий',
+  'ach.upg10': 'Инженер', 'ach.upg10.d': 'Улучшите узлы 10 раз',
+  'ach.time60': 'Марафон', 'ach.time60.d': '60 минут непрерывной работы',
+  'ach.tier3': 'Ядро крепнет', 'ach.tier3.d': 'Достигните тира 3 Ядра сети',
+  'ach.tier5': 'Ядро-гигант', 'ach.tier5.d': 'Достигните тира 5 Ядра сети',
+  'ach.prestige3': 'Циклы', 'ach.prestige3.d': 'Выполните Network Reset 3 раза',
   'help.title': 'РУКОВОДСТВО ОПЕРАТОРА',
   'help.d1': 'ЛКМ — выбрать узел, тянуть — переместить',
   'help.d2': 'Тянуть с порта OUT на порт IN — создать связь',
@@ -346,8 +464,9 @@ const RU: Record<string, string> = {
   'toast.core': 'ЯДРО СЕТИ ОНЛАЙН',
   'res.data': 'ДАННЫЕ', 'res.compute': 'ВЫЧИСЛЕНИЯ', 'res.processed': 'ОБРАБОТАННЫЕ',
   'res.filtered': 'ОТФИЛЬТРОВАННЫЕ', 'res.encrypted': 'ЗАШИФРОВАННЫЕ',
-  'res.fragment': 'ФРАГМЕНТЫ', 'res.credits': 'КРЕДИТЫ',
+  'res.fragment': 'ФРАГМЕНТЫ', 'res.credits': 'КРЕДИТЫ', 'res.signal': 'СИГНАЛ',
   'resd.data': 'Сырьё сети. Производится реле, потребляется почти всеми узлами. Также валюта покупок (верхняя панель).',
+  'resd.signal': 'Сырой сигнал сенсорных решёток. Потребляется только анализаторами.',
   'resd.compute': 'Вычислительный ресурс серверов фермы. Нужен процессорам, шифрованию и дата-центру.',
   'resd.processed': 'Продукт прокси-серверов. Компонент для дата-центра и синтезатора.',
   'resd.filtered': 'Продукт файрволов. Нужен для шифрования и синтезатора.',
@@ -369,11 +488,20 @@ const RU: Record<string, string> = {
   'nd.datacenter': 'ДАТА-ЦЕНТР', 'nd.datacenter.d': 'Монетизирует поток: производит СЕТЕВЫЕ КРЕДИТЫ.',
   'nd.hub': 'СЕТЕВОЙ ХАБ', 'nd.hub.d': 'Многопортовый узел для крупных магистралей.',
   'nd.core': 'ЯДРО СЕТИ', 'nd.core.d': 'Сердце инфраструктуры: ДАННЫЕ + ВЫЧИСЛЕНИЯ в большой поток кредитов.',
-  'tc.routing': 'РАСШИР. МАРШРУТИЗАЦИЯ', 'tc.routing.d': 'Открывает Прокси-сервер и Балансировщик. База для выбора пути.',
-  'tc.processing': 'ОБРАБОТКА ДАННЫХ', 'tc.processing.d': 'Путь обработки: Процессор данных и Архив.',
-  'tc.security': 'УРОВЕНЬ БЕЗОПАСНОСТИ', 'tc.security.d': 'Путь безопасности: Файрвол.',
-  'tc.encryptionTech': 'ШИФРОВАНИЕ', 'tc.encryptionTech.d': 'Продолжение пути безопасности: Ядро шифрования.',
-  'tc.distributed': 'РАСПРЕД. ВЫЧИСЛЕНИЯ', 'tc.distributed.d': 'Вершина пути обработки: Дата-центр, Хаб и Синтезатор.',
+  'nd.sensor': 'СЕНСОРНАЯ РЕШЁТКА', 'nd.sensor.d': 'Улавливает сырой СИГНАЛ извне. Кормит анализаторы.',
+  'nd.signalbuffer': 'БУФЕР СИГНАЛА', 'nd.signalbuffer.d': 'Накапливает СИГНАЛ и раздаёт его анализаторам.',
+  'nd.analyzer': 'АНАЛИЗАТОР', 'nd.analyzer.d': 'Разбирает СИГНАЛ и ВЫЧИСЛЕНИЯ на ФРАГМЕНТЫ.',
+  'nd.computebank': 'БАНК ВЫЧИСЛЕНИЙ', 'nd.computebank.d': 'Хранилище ВЫЧИСЛЕНИЙ: копит и раздаёт мощность процессорам.',
+  'nd.smartrouter': 'СМАРТ-МАРШРУТИЗАТОР', 'nd.smartrouter.d': 'Гибкая развязка: 3 входа и 3 выхода для ДАННЫХ.',
+  'nd.compressor': 'КОМПРЕССОР', 'nd.compressor.d': 'Сжимает ОБРАБОТАННЫЕ и ДАННЫЕ в СЕТЕВЫЕ КРЕДИТЫ.',
+  'nd.assembler': 'СБОРЩИК', 'nd.assembler.d': 'Собирает ФРАГМЕНТЫ из ЗАШИФРОВАННЫХ и ОБРАБОТАННЫХ данных.',
+  'nd.forge': 'КУЗНЯ', 'nd.forge.d': 'Переплавляет ЗАШИФРОВАННЫЕ данные и ВЫЧИСЛЕНИЯ в КРЕДИТЫ.',
+  'tc.routing': 'РАСШИР. МАРШРУТИЗАЦИЯ', 'tc.routing.d': 'Открывает Прокси-сервер, Балансировщик и Смарт-маршрутизатор. База для выбора пути.',
+  'tc.processing': 'ОБРАБОТКА ДАННЫХ', 'tc.processing.d': 'Путь обработки: Процессор данных, Архив и Банк вычислений.',
+  'tc.telemetry': 'ТЕЛЕМЕТРИЯ', 'tc.telemetry.d': 'Сырьевая волна: Сенсорная решётка, Буфер сигнала и Анализатор.',
+  'tc.security': 'УРОВЕНЬ БЕЗОПАСНОСТИ', 'tc.security.d': 'Путь безопасности: Файрвол и Компрессор.',
+  'tc.encryptionTech': 'ШИФРОВАНИЕ', 'tc.encryptionTech.d': 'Продолжение пути безопасности: Ядро шифрования и Сборщик.',
+  'tc.distributed': 'РАСПРЕД. ВЫЧИСЛЕНИЯ', 'tc.distributed.d': 'Вершина пути обработки: Дата-центр, Хаб, Синтезатор и Кузня.',
   'up.bandwidth': 'ПРОПУСКНАЯ СПОСОБНОСТЬ', 'up.bandwidth.d': '+50% к пропускной способности всех связей. Без предела.',
   'up.storageCap': 'ОБЪЁМ ХРАНИЛИЩ', 'up.storageCap.d': '+50% к вместимости хранилищ данных. Без предела.',
   'up.prodSpeed': 'СКОРОСТЬ ГЕНЕРАЦИИ', 'up.prodSpeed.d': 'Генераторы работают на 12% быстрее. Без предела.',
@@ -496,6 +624,24 @@ const EN: Record<string, string> = {
   'ach.time20': 'Night shift', 'ach.time20.d': '20 minutes of continuous uptime',
   'ach.tier1': 'The core lives', 'ach.tier1.d': 'Reach Network Core tier 1',
   'ach.prestige1': 'Second wind', 'ach.prestige1.d': 'Perform a Network Reset',
+  'ach.router3': 'Junction', 'ach.router3.d': 'Build 3 routers',
+  'ach.compute3': 'Compute cluster', 'ach.compute3.d': 'Build 3 compute servers',
+  'ach.processor3': 'Processing floor', 'ach.processor3.d': 'Build 3 data processors',
+  'ach.processor8': 'Assembly line', 'ach.processor8.d': 'Build 8 data processors',
+  'ach.firewall3': 'Perimeter', 'ach.firewall3.d': 'Build 3 firewalls',
+  'ach.variety5': 'Variety', 'ach.variety5.d': '5 different node types in your network',
+  'ach.variety8': 'Ecosystem', 'ach.variety8.d': '8 different node types in your network',
+  'ach.variety12': 'Full stack', 'ach.variety12.d': '12 different node types in your network',
+  'ach.conn30': 'The web', 'ach.conn30.d': 'Create 30 connections',
+  'ach.chain10': 'Throughput channel', 'ach.chain10.d': 'A chain of 10 nodes in a row',
+  'ach.credits2000': 'Magnate', 'ach.credits2000.d': 'Earn 2000 credits in one run',
+  'ach.frag200': 'Archivist', 'ach.frag200.d': 'Collect 200 data fragments',
+  'ach.tech5': 'Technocrat', 'ach.tech5.d': 'Unlock 5 technologies',
+  'ach.upg10': 'Engineer', 'ach.upg10.d': 'Upgrade nodes 10 times',
+  'ach.time60': 'Marathon', 'ach.time60.d': '60 minutes of continuous uptime',
+  'ach.tier3': 'Core hardens', 'ach.tier3.d': 'Reach Network Core tier 3',
+  'ach.tier5': 'Core colossus', 'ach.tier5.d': 'Reach Network Core tier 5',
+  'ach.prestige3': 'Cycles', 'ach.prestige3.d': 'Perform 3 Network Resets',
   'help.title': "OPERATOR'S GUIDE",
   'help.d1': 'LMB — select node, drag to move',
   'help.d2': 'Drag from an OUT port to an IN port — create a link',
@@ -524,8 +670,9 @@ const EN: Record<string, string> = {
   'toast.core': 'NETWORK CORE ONLINE',
   'res.data': 'DATA', 'res.compute': 'COMPUTE', 'res.processed': 'PROCESSED',
   'res.filtered': 'FILTERED', 'res.encrypted': 'ENCRYPTED',
-  'res.fragment': 'FRAGMENTS', 'res.credits': 'CREDITS',
+  'res.fragment': 'FRAGMENTS', 'res.credits': 'CREDITS', 'res.signal': 'SIGNAL',
   'resd.data': 'The raw flow of the network. Produced by relays, consumed by almost everything. Also the purchase currency (top bar).',
+  'resd.signal': 'Raw signal from sensor arrays. Consumed only by analyzers.',
   'resd.compute': 'Compute power from server farms. Feeds processors, encryption and the data center.',
   'resd.processed': 'Proxy server output. An ingredient for the data center and refinery.',
   'resd.filtered': 'Firewall output. Needed for encryption and the refinery.',
@@ -547,11 +694,20 @@ const EN: Record<string, string> = {
   'nd.datacenter': 'DATA CENTER', 'nd.datacenter.d': 'Monetizes your flow: produces NETWORK CREDITS.',
   'nd.hub': 'NETWORK HUB', 'nd.hub.d': 'Multi-port node for large backbones.',
   'nd.core': 'NETWORK CORE', 'nd.core.d': 'Heart of the infrastructure: DATA + COMPUTE into a heavy credit stream.',
-  'tc.routing': 'ADVANCED ROUTING', 'tc.routing.d': 'Unlocks Proxy Server and Load Balancer. The base for your path choice.',
-  'tc.processing': 'DATA PROCESSING', 'tc.processing.d': 'Processing path: Data Processor and Archive Vault.',
-  'tc.security': 'SECURITY LAYER', 'tc.security.d': 'Security path: Firewall.',
-  'tc.encryptionTech': 'ENCRYPTION', 'tc.encryptionTech.d': 'Security path continues: Encryption Core.',
-  'tc.distributed': 'DISTRIBUTED COMPUTING', 'tc.distributed.d': 'Processing path apex: Data Center, Hub and Refinery.',
+  'nd.sensor': 'SENSOR ARRAY', 'nd.sensor.d': 'Harvests raw SIGNAL from the outside. Feeds analyzers.',
+  'nd.signalbuffer': 'SIGNAL BUFFER', 'nd.signalbuffer.d': 'Banks SIGNAL and feeds it to analyzers.',
+  'nd.analyzer': 'ANALYZER', 'nd.analyzer.d': 'Breaks down SIGNAL and COMPUTE into FRAGMENTS.',
+  'nd.computebank': 'COMPUTE BANK', 'nd.computebank.d': 'Stores COMPUTE and feeds processing power to your processors.',
+  'nd.smartrouter': 'SMART ROUTER', 'nd.smartrouter.d': 'Flexible junction: 3 inputs and 3 outputs for DATA.',
+  'nd.compressor': 'COMPRESSOR', 'nd.compressor.d': 'Compresses PROCESSED and DATA into NETWORK CREDITS.',
+  'nd.assembler': 'ASSEMBLER', 'nd.assembler.d': 'Assembles FRAGMENTS from ENCRYPTED and PROCESSED data.',
+  'nd.forge': 'FORGE', 'nd.forge.d': 'Smelts ENCRYPTED data and COMPUTE into CREDITS.',
+  'tc.routing': 'ADVANCED ROUTING', 'tc.routing.d': 'Unlocks Proxy Server, Load Balancer and Smart Router. The base for your path choice.',
+  'tc.processing': 'DATA PROCESSING', 'tc.processing.d': 'Processing path: Data Processor, Archive Vault and Compute Bank.',
+  'tc.telemetry': 'TELEMETRY', 'tc.telemetry.d': 'Raw-resource wave: Sensor Array, Signal Buffer and Analyzer.',
+  'tc.security': 'SECURITY LAYER', 'tc.security.d': 'Security path: Firewall and Compressor.',
+  'tc.encryptionTech': 'ENCRYPTION', 'tc.encryptionTech.d': 'Security path continues: Encryption Core and Assembler.',
+  'tc.distributed': 'DISTRIBUTED COMPUTING', 'tc.distributed.d': 'Processing path apex: Data Center, Hub, Refinery and Forge.',
   'up.bandwidth': 'BANDWIDTH', 'up.bandwidth.d': '+50% throughput on all connections. Endless.',
   'up.storageCap': 'STORAGE CAPACITY', 'up.storageCap.d': '+50% capacity on data storages. Endless.',
   'up.prodSpeed': 'GENERATION SPEED', 'up.prodSpeed.d': 'Generators run 12% faster. Endless.',

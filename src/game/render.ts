@@ -1,7 +1,7 @@
 import type { Camera } from './camera';
 import { NODE_DEFS, RES_META, TUNE, fmt, fmtRate, tr } from './data';
 import { drawNodeIcon } from './icons';
-import { NODE_W, inputCapFor, invResources, nodeH, portPos, storageCapacity } from './state';
+import { NODE_W, inputCapFor, invResources, nodeH, portPos, storageCapFor } from './state';
 import type {
   FloatText, Flyer, GameNode, GameState, NodeTypeId, Particle,
 } from './types';
@@ -350,7 +350,7 @@ export class Renderer {
     for (const res of bars) {
       const cur = node.inv[res] ?? 0;
       const cap = def.category === 'storage'
-        ? storageCapacity(v.state)
+        ? storageCapFor(v.state, def)
         : inputCapFor(v.state, node, res) || def.capacity;
       const meta = RES_META[res];
       ctx.fillStyle = '#7d8ca0';

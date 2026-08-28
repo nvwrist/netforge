@@ -1,13 +1,14 @@
 // ── NetForge core types ──────────────────────────────────────────────────────
 
 export type ResourceId =
-  | 'data' | 'compute' | 'processed' | 'filtered' | 'encrypted' | 'fragment' | 'credits';
+  | 'data' | 'compute' | 'processed' | 'filtered' | 'encrypted' | 'fragment' | 'credits' | 'signal';
 
 export type NodeTypeId =
   | 'relay' | 'storage' | 'cache' | 'compute' | 'router' | 'balancer' | 'proxy'
-  | 'processor' | 'archive' | 'firewall' | 'encryption' | 'refinery' | 'datacenter' | 'hub' | 'core';
+  | 'processor' | 'archive' | 'firewall' | 'encryption' | 'refinery' | 'datacenter' | 'hub' | 'core'
+  | 'sensor' | 'computebank' | 'signalbuffer' | 'smartrouter' | 'analyzer' | 'compressor' | 'assembler' | 'forge';
 
-export type TechId = 'routing' | 'processing' | 'security' | 'encryptionTech' | 'distributed';
+export type TechId = 'routing' | 'processing' | 'security' | 'encryptionTech' | 'distributed' | 'telemetry';
 export type UpgradeId = 'bandwidth' | 'storageCap' | 'prodSpeed' | 'procSpeed' | 'packetSize';
 export type Lang = 'ru' | 'en';
 export type NodeCategory = 'generator' | 'storage' | 'transfer' | 'processor';
@@ -53,10 +54,24 @@ export interface UpgradeDef {
 
 export interface AchievementBonusRes { kind: 'res'; res: ResourceId; amount: number }
 export interface AchievementBonusBoost { kind: 'boost'; target: 'gen' | 'proc' | 'all'; mult: number; dur: number }
+
+// Декларативные условия достижений: новое достижение добавляется ТОЛЬКО в data.ts.
+export type AchievementCondition =
+  | { type: 'nodeCount'; nodeType: NodeTypeId; count: number }
+  | { type: 'anyNodeCount'; count: number }
+  | { type: 'connectionCount'; count: number }
+  | { type: 'statThreshold'; stat: 'delivered' | 'credits' | 'fragments' | 'conns' | 'nodes' | 'upgrades' | 'time' | 'placed' | 'data'; value: number }
+  | { type: 'chainLength'; length: number }
+  | { type: 'techCount'; count: number }
+  | { type: 'coreTier'; tier: number }
+  | { type: 'prestigeCount'; count: number }
+  | { type: 'nodeTypeVariety'; count: number };
+
 export interface AchievementDef {
   id: string;
   nameKey: string;
   descKey: string;
+  condition: AchievementCondition;
   bonus: AchievementBonusRes | AchievementBonusBoost;
 }
 
