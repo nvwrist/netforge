@@ -387,9 +387,10 @@ export class Renderer {
       ctx.strokeRect(x + 10.5, py + 0.5, w - 21, 6);
     }
 
-    // storage → reserve live indicator (P1: visible cause & effect)
-    if (def.category === 'storage') {
-      const cap = storageCapacity(v.state);
+    // storage → reserve live indicator (P1: visible cause & effect).
+    // Only data-storage drains into the wallet reserve.
+    if (def.category === 'storage' && def.inputs[0] === 'data') {
+      const cap = storageCapFor(v.state, def);
       const fill = node.inv.data ?? 0;
       const rate = TUNE.storageDrainMax * Math.pow(Math.max(0, fill) / cap, TUNE.storageDrainExp);
       const py = y + h - 19;

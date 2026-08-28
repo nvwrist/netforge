@@ -64,6 +64,20 @@ export function ResIcon({ res, size = 12 }: { res: ResourceId; size?: number }) 
           <circle cx="6" cy="7.8" r="1" fill={c} />
         </svg>
       );
+    case 'signal':
+      return (
+        <svg style={s} viewBox="0 0 12 12" fill="none">
+          <path d="M1.4 8.6 4 6l2 2 2.4-3 2.2 1.6" stroke={c} strokeWidth="1.2" strokeLinejoin="round" />
+          <circle cx="6" cy="2.4" r="1.2" fill={c} />
+        </svg>
+      );
+    default:
+      return (
+        <svg style={s} viewBox="0 0 12 12" fill="none">
+          <rect x="2" y="2" width="8" height="8" stroke={c} strokeWidth="1.2" />
+          <circle cx="6" cy="6" r="1.5" fill={c} />
+        </svg>
+      );
   }
 }
 
